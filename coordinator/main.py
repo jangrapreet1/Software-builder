@@ -3,6 +3,7 @@ Main entry point for the Autonomous App-Building Platform Coordinator
 """
 import os
 import asyncio
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -37,6 +38,9 @@ app.add_middleware(
 
 # Load settings
 settings = Settings()
+
+BASE_DIR = Path(__file__).resolve().parent
+GENERATED_DIR = Path(settings.generated_apps_dir).resolve()
 
 # Optionally use a lightweight fake workflow for testing to avoid external calls
 USE_FAKE_WORKFLOW = os.getenv("USE_FAKE_WORKFLOW", "").lower() in ("1", "true", "yes")
@@ -237,11 +241,25 @@ if os.path.exists(ui_path):
 
 if __name__ == "__main__":
     import uvicorn
+    import os
     
+    # Configure file watcher settings using environment variables
+    os.environ["WATCHFILES_FORCE_POLLING"] = "1"  # More reliable on Windows
+    os.environ["WATCHFILES_IGNORE_PATTERNS"] = "*generated*"  # Ignore any path with 'generated'
+    
+    # Get absolute paths
+    base_path = str(BASE_DIR.absolute())
+    generated_path = str(GENERATED_DIR.absolute())
+    
+    # Print configuration for debugging
     console.print("\n[bold cyan]═══════════════════════════════════════════════════[/bold cyan]")
     console.print("[bold cyan]  Autonomous App-Building Platform - Coordinator  [/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
+    console.print(f"[CONFIG] Watching directory: {base_path}")
+    console.print(f"[CONFIG] Excluding pattern: *generated*")
+    console.print(f"[CONFIG] Using polling: Yes\n")
     
+    # Simple uvicorn configuration without problematic parameters
     uvicorn.run(
         "main:app",
         host=settings.coordinator_host,

@@ -1,8 +1,11 @@
 """
 Configuration settings for the coordinator
 """
-from pydantic_settings import BaseSettings
+from pathlib import Path
 from typing import Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -22,7 +25,9 @@ class Settings(BaseSettings):
     frontend_port: int = 3000
     
     # Generated Apps Directory
-    generated_apps_dir: str = "./generated"
+    generated_apps_dir: str = Field(
+        default_factory=lambda: str((Path(__file__).resolve().parents[2] / "generated").resolve())
+    )
     
     # Agent Configuration
     max_retries: int = 3

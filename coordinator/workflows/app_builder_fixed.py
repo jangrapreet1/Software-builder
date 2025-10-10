@@ -6,6 +6,7 @@ import json
 import uuid
 from typing import TypedDict, Annotated, Sequence
 from datetime import datetime
+from pathlib import Path
 import operator
 import asyncio
 
@@ -283,6 +284,7 @@ class AppBuilderWorkflowFixed:
             self._log(state, "error", f"Failed to generate backend: {str(e)}")
             raise
     
+
     async def _generate_frontend(self, state: AppBuilderState) -> AppBuilderState:
         """Generate frontend code"""
         try:
@@ -292,7 +294,8 @@ class AppBuilderWorkflowFixed:
             frontend_code = await self.frontend_agent.generate_code(
                 state["frontend_tasks"],
                 state["entities"],
-                state["technical_specs"]
+                state["technical_specs"],
+                state["backend_code"]  # <-- ADDED THIS ARGUMENT
             )
             
             self._log(state, "success", "Frontend code generated")
@@ -303,6 +306,7 @@ class AppBuilderWorkflowFixed:
         except Exception as e:
             self._log(state, "error", f"Failed to generate frontend: {str(e)}")
             raise
+
     
     async def _integrate_code(self, state: AppBuilderState) -> AppBuilderState:
         """Integrate backend and frontend code"""
@@ -319,7 +323,10 @@ class AppBuilderWorkflowFixed:
             
             self._log(state, "success", "Code integration complete")
             state["integrated_code"] = integrated
-            state["source_path"] = integrated.get("path", f"./generated/{state['project_name']}")
+            state["source_path"] = integrated.get(
+                "path",
+                str(Path(self.settings.generated_apps_dir).resolve() / state['project_name'])
+            )
             state["progress"] = 90
             
             return state
@@ -373,4 +380,48 @@ class AppBuilderWorkflowFixed:
         print(f"[{level.upper()}] {message}")
     
     def _generate_project_name(self, description: str) -> str:
-        """Generate a projec
+        """Generate a project name from description"""
+        # Simple name generation
+        words = description.lower().split()
+        if "app" in words:
+            return "my-app"
+        elif "todo" in words:
+            return "todo-app"
+        elif "blog" in words:
+            return "blog-app"
+        else:
+            return "generated-app"
+    
+    async def get_build_status(self, build_id: str) -> dict | None:
+        """Get the status of a build"""
+        build = self.builds.get(build_id)
+        
+        if not build:
+            return None
+        
+        return {
+            "build_id": build_id,
+            "status": build["build_status"],
+            "progress": build["progress"],
+            "current_step": build["current_step"],
+            "logs": build["logs"]
+        }
+    
+    async def list_builds(self) -> list[dict]:
+        """List all builds"""
+        return [
+            {
+                "build_id": build_id,
+                "project_name": build["project_name"],
+                "status": build["build_status"],
+                "progress": build["progress"]
+            }
+            for build_id, build in self.builds.items()
+        ]
+    
+    async def delete_build(self, build_id: str) -> dict:
+        """Delete a build"""
+        if build_id in self.builds:
+            del self.builds[build_id]
+            return {"success": True, "message": "Build deleted"}
+        return {"success": False, "message": "Build not found"}

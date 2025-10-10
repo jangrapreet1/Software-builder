@@ -36,6 +36,11 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Generated application code
+# Should not be committed to the repository
+/generated/
+/coordinator/generated/
+
 # IDE
 .vscode/
 .idea/
@@ -46,6 +51,8 @@ yarn-error.log*
 # Generated apps
 generated/*
 !generated/.gitkeep
+coordinator/generated/*
+!coordinator/generated/.gitkeep
 
 # Database
 *.db
@@ -71,3 +78,4 @@ htmlcov/
 # Build artifacts
 *.tar.gz
 *.zip
+
