@@ -1,0 +1,73 @@
+{
+  "detection_timestamp": "2025-10-13T19:35:09.979079Z",
+  "repository_root": "c:\\Users\\Lenovo\\Code\\Software builder\\coordinator",
+  "languages": {
+    "confident": [
+      {
+        "language": "Python",
+        "version": "3.11+",
+        "evidence": [
+          "requirements.txt",
+          "*.py"
+        ]
+      }
+    ],
+    "candidate": [
+      {
+        "language": "JavaScript/TypeScript",
+        "version": "Unknown",
+        "evidence": "Found .js/.ts/.tsx/.jsx files",
+        "note": "No package.json found"
+      }
+    ]
+  },
+  "frameworks": {
+    "confident": [
+      "FastAPI",
+      "LangChain",
+      "LangGraph",
+      "AutoGen",
+      "Docker"
+    ],
+    "candidate": []
+  },
+  "package_managers": [
+    {
+      "name": "pip",
+      "install_command": "pip install -r requirements.txt",
+      "files": [
+        "requirements.txt"
+      ]
+    }
+  ],
+  "build_commands": {
+    "confident": [
+      "pip install -r requirements.txt",
+      "docker build -t app ."
+    ],
+    "candidate": []
+  },
+  "run_commands": {
+    "confident": [
+      "python main.py"
+    ],
+    "candidate": [
+      "uvicorn main:app --reload"
+    ]
+  },
+  "test_commands": {
+    "confident": [],
+    "candidate": []
+  },
+  "docker_config": {
+    "dockerfile": "Dockerfile",
+    "exposed_ports": [
+      5000
+    ]
+  },
+  "environment_variables": {
+    "required": [],
+    "optional": [],
+    "source": null
+  }
+}
