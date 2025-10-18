@@ -72,9 +72,11 @@ class SandboxOrchestrator:
         environment: Optional[Dict[str, str]] = None,
         build_command: Optional[str] = None,
         run_command: Optional[str] = None,
+        approved_commands: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
     ) -> Dict:
         """
-        Launch a sandboxed application instance
+        Launch a sandboxed application instance with command validation
         
         Args:
             app_path: Path to the application directory
@@ -84,8 +86,10 @@ class SandboxOrchestrator:
             memory_limit: Memory limit (e.g., "512m", "1g")
             timeout: Max run time in seconds
             environment: Environment variables
-            build_command: Optional build command
-            run_command: Optional run command
+            build_command: Optional build command (must be in approved_commands)
+            run_command: Optional run command (must be in approved_commands)
+            approved_commands: List of user-approved commands
+            session_id: Session ID for tracking
         
         Returns:
             Instance details including preview URL, instance ID, expiry
@@ -173,7 +177,7 @@ class SandboxOrchestrator:
             # Generate preview URL
             preview_url = f"http://localhost:{host_port}" if host_port else None
             
-            # Store instance info
+            # Store instance info with command tracking
             self.instances[instance_id] = {
                 "instance_id": instance_id,
                 "container": container,
@@ -188,10 +192,16 @@ class SandboxOrchestrator:
                 "cpu_limit": cpu_limit,
                 "memory_limit": memory_limit,
                 "build_logs": build_log_lines[:50],  # Keep last 50 lines
+                "build_command": build_command,
+                "run_command": run_command,
+                "approved_commands": approved_commands or [],
+                "session_id": session_id,
             }
             
             # Schedule cleanup
             asyncio.create_task(self._schedule_cleanup(instance_id, timeout))
+            
+            logger.info(f"Instance {instance_id} launched with commands: build={build_command}, run={run_command}")
             
             return {
                 "instance_id": instance_id,
@@ -201,6 +211,8 @@ class SandboxOrchestrator:
                 "expires_at": self.instances[instance_id]["expires_at"],
                 "logs_url": f"/api/sandbox/{instance_id}/logs",
                 "port": host_port,
+                "build_command": build_command,
+                "run_command": run_command,
             }
             
         except DockerException as e:
@@ -218,27 +230,43 @@ class SandboxOrchestrator:
         
         try:
             container = instance["container"]
-            
-            if force:
-                container.kill()
-                logger.info(f"Forcefully killed container: {instance_id}")
-            else:
-                container.stop(timeout=10)
-                logger.info(f"Stopped container: {instance_id}")
-            
+
+            try:
+                container.reload()
+                container_status = container.status
+            except DockerException:
+                container_status = None
+
+            already_stopped = container_status in {"exited", "dead", "created", "removing"}
+
+            if not already_stopped:
+                try:
+                    if force:
+                        container.kill()
+                        logger.info(f"Forcefully killed container: {instance_id}")
+                    else:
+                        container.stop(timeout=10)
+                        logger.info(f"Stopped container: {instance_id}")
+                except APIError as e:
+                    if e.status_code == 409 and "is not running" in str(e).lower():
+                        already_stopped = True
+                        logger.info(f"Container already stopped: {instance_id}")
+                    else:
+                        raise
+
             instance["status"] = "stopped"
             instance["stopped_at"] = datetime.utcnow().isoformat() + "Z"
-            
+
             # Cleanup
             await self._cleanup_instance(instance_id)
-            
+
             return {
                 "success": True,
                 "instance_id": instance_id,
                 "status": "stopped",
-                "message": "Instance stopped successfully"
+                "message": "Instance already stopped" if already_stopped else "Instance stopped successfully"
             }
-            
+
         except DockerException as e:
             logger.error(f"Failed to stop instance: {e}")
             return {

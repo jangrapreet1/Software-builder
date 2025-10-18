@@ -32,15 +32,21 @@ class SessionManager:
         preview_url: str,
         duration: Optional[int] = None,
         metadata: Optional[Dict] = None,
+        build_id: Optional[str] = None,
+        approved_commands: Optional[list] = None,
+        detection_data: Optional[Dict] = None,
     ) -> Dict:
         """
-        Create a new preview session with secure token
+        Create a new preview session with secure token and rich metadata
         
         Args:
             instance_id: Instance identifier
             preview_url: Base preview URL
             duration: Session duration in seconds
             metadata: Additional session metadata
+            build_id: Build/workflow ID for traceability
+            approved_commands: Commands approved by user
+            detection_data: Repository detection context
         
         Returns:
             Session details with token and expiry
@@ -62,7 +68,7 @@ class SessionManager:
         duration = duration or self.default_session_duration
         expires_at = datetime.utcnow() + timedelta(seconds=duration)
         
-        # Create session
+        # Create session with enriched metadata
         session = {
             "session_token": session_token,
             "instance_id": instance_id,
@@ -73,6 +79,11 @@ class SessionManager:
             "duration": duration,
             "active": True,
             "metadata": metadata or {},
+            "build_id": build_id,
+            "approved_commands": approved_commands or [],
+            "detection_data": detection_data or {},
+            "agent_outputs": [],  # Track agent interactions
+            "workflow_state": None,  # Link to workflow state
         }
         
         # Store session
@@ -206,13 +217,59 @@ class SessionManager:
             del self.sessions[session_token]
             self.instance_sessions[instance_id].remove(session_token)
     
+    def add_agent_output(self, session_token: str, agent_name: str, output: Dict) -> bool:
+        """Add agent output to session for context tracking"""
+        if session_token not in self.sessions:
+            return False
+        
+        session = self.sessions[session_token]
+        session["agent_outputs"].append({
+            "agent": agent_name,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "output": output
+        })
+        
+        logger.info(f"Added {agent_name} output to session {session_token[:16]}...")
+        return True
+    
+    def link_workflow_state(self, session_token: str, workflow_state_path: str) -> bool:
+        """Link session to persisted workflow state"""
+        if session_token not in self.sessions:
+            return False
+        
+        self.sessions[session_token]["workflow_state"] = workflow_state_path
+        logger.info(f"Linked workflow state to session {session_token[:16]}...")
+        return True
+    
+    def get_session_context(self, session_token: str) -> Optional[Dict]:
+        """Get full session context including metadata, commands, and agent outputs"""
+        session = self.sessions.get(session_token)
+        if not session:
+            return None
+        
+        return {
+            "session_token": session_token[:16] + "...",  # Truncated for security
+            "instance_id": session["instance_id"],
+            "build_id": session.get("build_id"),
+            "created_at": session["created_at"],
+            "expires_at": session["expires_at"],
+            "active": session["active"],
+            "approved_commands": session.get("approved_commands", []),
+            "detection_data": session.get("detection_data", {}),
+            "agent_outputs": session.get("agent_outputs", []),
+            "workflow_state": session.get("workflow_state"),
+            "metadata": session.get("metadata", {})
+        }
+    
     def get_stats(self) -> Dict:
         """Get session statistics"""
         total_sessions = len(self.sessions)
         active_sessions = sum(1 for s in self.sessions.values() if s["active"])
+        sessions_with_workflows = sum(1 for s in self.sessions.values() if s.get("workflow_state"))
         
         return {
             "total_sessions": total_sessions,
             "active_sessions": active_sessions,
             "instances_with_sessions": len(self.instance_sessions),
+            "sessions_with_workflows": sessions_with_workflows,
         }

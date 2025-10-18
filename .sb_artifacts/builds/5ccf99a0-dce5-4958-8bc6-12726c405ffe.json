@@ -1,0 +1,18 @@
+{
+  "build_id": "5ccf99a0-dce5-4958-8bc6-12726c405ffe",
+  "project_name": "task manag",
+  "status": "failed",
+  "progress": 0,
+  "current_step": "failed",
+  "source_path": "",
+  "app_url": "",
+  "logs": [
+    {
+      "level": "error",
+      "message": "Build failed: 'AppBuilderWorkflowFixed' object has no attribute '_analyze_brief'",
+      "timestamp": "2025-10-17T00:49:08.794626"
+    }
+  ],
+  "created_at": "2025-10-16T19:19:08.794626Z",
+  "updated_at": "2025-10-16T19:19:08.794626Z"
+}

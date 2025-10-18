@@ -1,0 +1,124 @@
+{
+  "detection_timestamp": "2025-10-13T21:02:26.668816Z",
+  "repository_root": "C:\\Users\\Lenovo\\Code\\Software builder",
+  "languages": {
+    "confident": [
+      {
+        "language": "Python",
+        "version": "3.11+",
+        "evidence": [
+          "requirements.txt",
+          "*.py"
+        ]
+      }
+    ],
+    "candidate": [
+      {
+        "language": "JavaScript/TypeScript",
+        "version": "Unknown",
+        "evidence": "Found .js/.ts/.tsx/.jsx files",
+        "note": "No package.json found"
+      }
+    ]
+  },
+  "frameworks": {
+    "confident": [
+      "FastAPI",
+      "LangChain",
+      "LangGraph",
+      "AutoGen",
+      "Docker"
+    ],
+    "candidate": []
+  },
+  "package_managers": [
+    {
+      "name": "pip",
+      "install_command": "pip install -r requirements.txt",
+      "files": [
+        "requirements.txt"
+      ]
+    }
+  ],
+  "build_commands": {
+    "confident": [
+      "pip install -r requirements.txt",
+      "docker build -t app .",
+      "docker-compose build"
+    ],
+    "candidate": []
+  },
+  "run_commands": {
+    "confident": [
+      "docker-compose up",
+      "python main.py"
+    ],
+    "candidate": [
+      "uvicorn main:app --reload"
+    ]
+  },
+  "test_commands": {
+    "confident": [
+      "pytest"
+    ],
+    "candidate": []
+  },
+  "docker_config": {
+    "dockerfile": "Dockerfile",
+    "exposed_ports": [
+      5000
+    ],
+    "compose_file": "docker-compose.yml",
+    "services": [
+      "postgres",
+      "image: postgres:15-alpine",
+      "container_name: appbuilder-db",
+      "environment",
+      "POSTGRES_USER: ${POSTGRES_USER:-postgres}",
+      "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}",
+      "POSTGRES_DB: ${POSTGRES_DB:-appbuilder}",
+      "ports",
+      "volumes",
+      "networks",
+      "healthcheck",
+      "test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]",
+      "interval: 10s",
+      "timeout: 5s",
+      "retries: 5",
+      "coordinator",
+      "build",
+      "context: ./coordinator",
+      "dockerfile: Dockerfile",
+      "container_name: appbuilder-coordinator",
+      "environment",
+      "ports",
+      "volumes",
+      "depends_on",
+      "postgres",
+      "condition: service_healthy",
+      "networks",
+      "command: uvicorn main:app --host 0.0.0.0 --port 5000 --reload"
+    ]
+  },
+  "environment_variables": {
+    "required": [
+      "GOOGLE_API_KEY",
+      "POSTGRES_PASSWORD"
+    ],
+    "optional": [
+      "GEMINI_MODEL",
+      "DATABASE_URL",
+      "POSTGRES_USER",
+      "POSTGRES_DB",
+      "COORDINATOR_HOST",
+      "COORDINATOR_PORT",
+      "BACKEND_PORT",
+      "FRONTEND_PORT",
+      "GENERATED_APPS_DIR",
+      "MAX_RETRIES",
+      "AGENT_TIMEOUT",
+      "DOCKER_NETWORK"
+    ],
+    "source": ".env.example"
+  }
+}

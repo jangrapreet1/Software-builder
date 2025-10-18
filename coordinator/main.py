@@ -5,6 +5,7 @@ import os
 import asyncio
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,19 +13,40 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from rich.console import Console
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in os.sys.path:
+    os.sys.path.insert(0, str(ROOT_DIR))
+
+# Initialize console for rich output
+console = Console()
+
 from workflows.app_builder import AppBuilderWorkflow
 from config.settings import Settings
 from services.repository_detector import RepositoryDetector
 from services.sandbox_orchestrator import SandboxOrchestrator
 from services.session_manager import SessionManager
 from services.permission_manager import PermissionManager
+from services.build_registry import BuildRegistry
 from services.audit_logger import audit_logger, AuditEventType
+from services.run_audit_logger import RunAuditLogger
+from services.agent_collaboration_manager import CollaborationManager, LivePreviewBridge
+from agents.problem_resolver_agent import ProblemResolverAgent
+from agents.enhanced_problem_resolver import EnhancedProblemResolverAgent, RunMode
+from agents.tester_agent import TesterAgent
+# Enhanced features
+try:
+    from workflows.app_builder_enhanced import EnhancedAppBuilderWorkflow
+    from api.enhanced_endpoints import router as enhanced_router, initialize_enhanced_services
+    ENHANCED_FEATURES_AVAILABLE = True
+    console.print("[green]✓ Enhanced features available[/green]")
+except ImportError as e:
+    console.print(f"[yellow]⚠ Enhanced features unavailable: {e}[/yellow]")
+    ENHANCED_FEATURES_AVAILABLE = False
+
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Load environment variables
 load_dotenv()
-
-# Initialize console for rich output
-console = Console()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -42,11 +64,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Include enhanced API router if available
+if ENHANCED_FEATURES_AVAILABLE:
+    try:
+        app.include_router(enhanced_router)
+        console.print("[green]✓ Enhanced API endpoints registered[/green]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ Enhanced API registration failed: {e}[/yellow]")
+
+
+
 # Load settings
 settings = Settings()
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
 GENERATED_DIR = Path(settings.generated_apps_dir).resolve()
+build_registry = BuildRegistry(REPO_ROOT)
+build_registry.bootstrap_from_generated(GENERATED_DIR)
+run_audit_logger = RunAuditLogger(str(REPO_ROOT / ".sb_artifacts"))
 
 # Initialize sandbox services
 try:
@@ -64,13 +101,44 @@ except Exception as e:
     session_manager = None
     permission_manager = None
 
+# Initialize Phase 2 agents and managers
+try:
+    llm = ChatGoogleGenerativeAI(
+        model=settings.gemini_model,
+        temperature=0.7,
+        google_api_key=settings.google_api_key
+    )
+    problem_resolver = ProblemResolverAgent(llm, settings)
+    enhanced_resolver = EnhancedProblemResolverAgent(llm, settings, sandbox_orchestrator)
+    tester_agent = TesterAgent(llm, settings)
+    collaboration_manager = CollaborationManager(settings)
+    live_preview_bridge = LivePreviewBridge(sandbox_orchestrator, settings) if sandbox_orchestrator else None
+    console.print("[green]✓ Phase 2 agents initialized (including enhanced resolver)[/green]")
+except Exception as e:
+    console.print(f"[yellow]⚠ Phase 2 agents unavailable: {e}[/yellow]")
+    problem_resolver = None
+    enhanced_resolver = None
+    tester_agent = None
+    collaboration_manager = None
+    live_preview_bridge = None
+
 # Optionally use a lightweight fake workflow for testing to avoid external calls
 USE_FAKE_WORKFLOW = os.getenv("USE_FAKE_WORKFLOW", "").lower() in ("1", "true", "yes")
 
 if USE_FAKE_WORKFLOW:
     class _FakeWorkflow:
-        def __init__(self):
+        def __init__(self, registry: BuildRegistry):
             self._builds = {}
+            self.build_registry = registry
+            for record in self.build_registry.load_all():
+                self._builds[record["build_id"]] = {
+                    "build_id": record["build_id"],
+                    "project_name": record.get("project_name", record["build_id"]),
+                    "build_status": record.get("status", "success"),
+                    "progress": int(record.get("progress", 100)),
+                    "current_step": record.get("current_step", "Complete"),
+                    "logs": record.get("logs", []),
+                }
 
         async def build_from_brief(self, description: str, name: str | None = None, requirements: list[str] | None = None) -> dict:
             if not description or not description.strip():
@@ -88,6 +156,15 @@ if USE_FAKE_WORKFLOW:
                 "app_url": f"http://localhost:3000/{project_name}",
                 "source_path": f"./generated/{project_name}",
             }
+            self.build_registry.register_build({
+                "build_id": bid,
+                "project_name": project_name,
+                "status": "success",
+                "progress": 100,
+                "current_step": "Complete",
+                "app_url": self._builds[bid]["app_url"],
+                "source_path": self._builds[bid]["source_path"],
+            })
             return {
                 "status": "success",
                 "build_id": bid,
@@ -100,6 +177,15 @@ if USE_FAKE_WORKFLOW:
         async def get_build_status(self, build_id: str) -> dict | None:
             b = self._builds.get(build_id)
             if not b:
+                record = self.build_registry.get(build_id)
+                if record:
+                    return {
+                        "build_id": record["build_id"],
+                        "status": record.get("status", "unknown"),
+                        "progress": int(record.get("progress", 0)),
+                        "current_step": record.get("current_step", ""),
+                        "logs": record.get("logs", []),
+                    }
                 return None
             return {
                 "build_id": build_id,
@@ -110,27 +196,56 @@ if USE_FAKE_WORKFLOW:
             }
 
         async def list_builds(self) -> list[dict]:
+            combined = {record["build_id"]: record for record in self.build_registry.load_all()}
+            for b_id, b in self._builds.items():
+                combined[b_id] = {
+                    "build_id": b_id,
+                    "project_name": b.get("project_name", b_id),
+                    "status": b.get("build_status", "building"),
+                    "progress": b.get("progress", 0),
+                    "source_path": b.get("source_path"),
+                    "current_step": b.get("current_step", ""),
+                }
             return [
                 {
-                    "build_id": b_id,
-                    "project_name": b["project_name"],
-                    "status": b["build_status"],
-                    "progress": b["progress"],
+                    "build_id": build_id,
+                    "project_name": meta.get("project_name", build_id),
+                    "status": meta.get("status", meta.get("build_status", "unknown")),
+                    "progress": int(meta.get("progress", 0)),
+                    "source_path": meta.get("source_path"),
+                    "current_step": meta.get("current_step", ""),
+                    "updated_at": meta.get("updated_at"),
+                    "created_at": meta.get("created_at"),
                 }
-                for b_id, b in self._builds.items()
+                for build_id, meta in combined.items()
             ]
 
         async def delete_build(self, build_id: str) -> dict:
             if build_id in self._builds:
                 del self._builds[build_id]
+                self.build_registry.remove(build_id)
+                return {"success": True, "message": "Build deleted"}
+            if self.build_registry.remove(build_id):
                 return {"success": True, "message": "Build deleted"}
             return {"success": False, "message": "Build not found"}
 
-    workflow = _FakeWorkflow()
+    workflow = _FakeWorkflow(build_registry)
 else:
     # Initialize FIXED workflow
     from workflows.app_builder_fixed import AppBuilderWorkflowFixed
-    workflow = AppBuilderWorkflowFixed(settings)
+    workflow = AppBuilderWorkflowFixed(settings, build_registry)
+
+# Initialize enhanced workflow if available
+enhanced_workflow = None
+if ENHANCED_FEATURES_AVAILABLE:
+    try:
+        enhanced_workflow = EnhancedAppBuilderWorkflow(settings)
+        initialize_enhanced_services(enhanced_workflow, settings)
+        console.print("[green]✓ Enhanced workflow initialized[/green]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ Enhanced workflow initialization failed: {e}[/yellow]")
+        enhanced_workflow = None
+
 
 
 class ProjectBrief(BaseModel):
@@ -179,6 +294,7 @@ class LaunchRequest(BaseModel):
     memory_limit: str = "512m"
     timeout: int = 3600
     environment: dict = {}
+    session_id: str | None = None
 
 
 class StopRequest(BaseModel):
@@ -226,8 +342,11 @@ async def build_app(brief: ProjectBrief):
     try:
         console.print(f"\n[bold green]Received build request:[/bold green] {brief.description}")
         
+        # Use enhanced workflow if available, otherwise fall back to standard workflow
+        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        
         # Start the workflow
-        result = await workflow.build_from_brief(
+        result = await active_workflow.build_from_brief(
             description=brief.description,
             name=brief.name,
             requirements=brief.requirements
@@ -251,7 +370,8 @@ async def build_app(brief: ProjectBrief):
 async def get_build_status(build_id: str):
     """Get the status of a build"""
     try:
-        status = await workflow.get_build_status(build_id)
+        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        status = await active_workflow.get_build_status(build_id)
         
         if not status:
             raise HTTPException(status_code=404, detail="Build not found")
@@ -268,9 +388,33 @@ async def get_build_status(build_id: str):
 async def list_builds():
     """List all builds"""
     try:
-        builds = await workflow.list_builds()
+        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        builds = await active_workflow.list_builds()
         return {"builds": builds}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/generated/projects")
+async def get_generated_projects():
+    """List projects available in the generated directory"""
+    try:
+        projects = []
+        if GENERATED_DIR.exists():
+            for entry in sorted(GENERATED_DIR.iterdir(), key=lambda p: p.name.lower()):
+                if entry.is_dir():
+                    stats = entry.stat()
+                    projects.append({
+                        "name": entry.name,
+                        "path": str(entry.resolve()),
+                        "created_at": datetime.utcfromtimestamp(stats.st_ctime).isoformat() + "Z",
+                        "updated_at": datetime.utcfromtimestamp(stats.st_mtime).isoformat() + "Z",
+                        "has_backend": (entry / "backend").exists(),
+                        "has_frontend": (entry / "frontend").exists()
+                    })
+        return {"projects": projects}
+    except Exception as e:
+        console.print(f"[bold red]Error listing generated projects:[/bold red] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -278,7 +422,8 @@ async def list_builds():
 async def delete_build(build_id: str):
     """Delete a build and its artifacts"""
     try:
-        result = await workflow.delete_build(build_id)
+        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        result = await active_workflow.delete_build(build_id)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -295,10 +440,17 @@ async def detect_repository(request: DetectionRequest):
     Returns a detection report for user approval. Persists report to .sb_artifacts/.
     """
     try:
-        repo_path = Path(request.repo_path).resolve()
+        repo_path = Path(request.repo_path)
+
+        if not repo_path.is_absolute():
+            repo_path = (REPO_ROOT / repo_path).resolve()
+        else:
+            repo_path = repo_path.resolve()
         
+        console.print(f"[cyan]Detect request path:[/cyan] {repo_path} (exists={repo_path.exists()})")
+
         if not repo_path.exists():
-            raise HTTPException(status_code=404, detail=f"Repository path not found: {request.repo_path}")
+            raise HTTPException(status_code=404, detail=f"Repository path not found: {repo_path}")
         
         detector = RepositoryDetector(str(repo_path))
         detection_report = detector.detect_all(persist=True)
@@ -442,10 +594,14 @@ async def launch_app(request: LaunchRequest):
             raise HTTPException(status_code=404, detail=f"Application path not found: {request.app_path}")
         
         # Generate session ID if not provided
-        session_id = f"session-{app_path.name}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        session_id = request.session_id or f"session-{app_path.name}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
         
         # Check permission
-        if not permission_manager.has_permission(session_id, "allow_run"):
+        has_permission = permission_manager.has_permission(session_id, "allow_run")
+        console.print(
+            f"[yellow]Permission check for {session_id}: allow_run={has_permission}, stored={permission_manager.get_permission(session_id)}[/yellow]"
+        )
+        if not has_permission:
             # Get detection report to show required commands
             detector = RepositoryDetector(str(app_path))
             report = detector.get_latest_detection_report()
@@ -467,7 +623,21 @@ async def launch_app(request: LaunchRequest):
         
         console.print(f"[bold green]Launching sandbox:[/bold green] {app_path.name}")
         
-        # Launch instance
+        # Get detection data for context
+        detector = RepositoryDetector(str(app_path))
+        detection_data = detector.get_latest_detection_report() or {}
+        
+        # Get approved commands
+        approved_commands = permission_manager.get_approved_commands(session_id)
+        
+        # Extract build and run commands from detection or use defaults
+        build_cmd = detection_data.get("build_commands", {}).get("confident", [])
+        run_cmd = detection_data.get("run_commands", {}).get("confident", [])
+        
+        build_command = build_cmd[0] if build_cmd else None
+        run_command = run_cmd[0] if run_cmd else None
+        
+        # Launch instance with command tracking
         instance = await sandbox_orchestrator.launch_instance(
             app_path=str(app_path),
             port=request.port,
@@ -475,14 +645,21 @@ async def launch_app(request: LaunchRequest):
             memory_limit=request.memory_limit,
             timeout=request.timeout,
             environment=request.environment,
+            build_command=build_command,
+            run_command=run_command,
+            approved_commands=approved_commands,
+            session_id=session_id,
         )
         
-        # Create secure session
+        # Create secure session with rich metadata
         session = session_manager.create_session(
             instance_id=instance["instance_id"],
             preview_url=instance["preview_url"],
             duration=request.timeout,
-            metadata={"app_path": str(app_path)}
+            metadata={"app_path": str(app_path)},
+            build_id=None,  # Could link to a build workflow if applicable
+            approved_commands=approved_commands,
+            detection_data=detection_data,
         )
         
         # Audit log
@@ -509,7 +686,8 @@ async def launch_app(request: LaunchRequest):
             "expires_at": instance["expires_at"],
             "logs_url": instance["logs_url"],
             "port": instance["port"],
-            "message": "Sandbox instance launched successfully"
+            "message": "Sandbox instance launched successfully",
+            "session_id": session_id
         }
         
     except Exception as e:
@@ -724,6 +902,419 @@ async def query_audit_events(
     return {"events": events, "count": len(events)}
 
 
+@app.get("/api/audit/{run_id}")
+async def get_run_audit(run_id: str):
+    """Get audit log for a specific run"""
+    log = run_audit_logger.get_run_log(run_id)
+    if not log:
+        raise HTTPException(status_code=404, detail=f"Run audit log not found: {run_id}")
+    return {"runId": run_id, "log": log, "steps": len(log)}
+
+
+@app.get("/api/audit/runs/list")
+async def list_run_audits(limit: int = 50):
+    """List recent run audits"""
+    runs = run_audit_logger.list_runs(limit=limit)
+    return {"runs": runs, "count": len(runs)}
+
+
+# ============================================================================
+# PHASE 2: PROBLEM RESOLUTION & TESTING ENDPOINTS
+# ============================================================================
+
+class ResolveRequest(BaseModel):
+    """Problem resolution request"""
+    app_path: str
+    error_logs: str = None
+    auto_fix: bool = True
+
+
+class TestRequest(BaseModel):
+    """Test execution request"""
+    app_path: str
+    test_type: str = "all"
+    specific_tests: list[str] = []
+    generate_missing: bool = True
+
+
+class LivePreviewRequest(BaseModel):
+    """Live preview creation request"""
+    build_id: str
+    app_path: str
+    port: int = 3000
+    auto_start: bool = True
+
+
+@app.post("/api/resolve/analyze")
+async def analyze_and_resolve_issues(request: ResolveRequest):
+    """
+    Analyze and automatically resolve code issues
+    Phase 2: Autonomous problem resolution across 12+ error categories
+    """
+    if not problem_resolver:
+        raise HTTPException(status_code=503, detail="Problem resolver not available")
+    
+    try:
+        console.print(f"[bold green]Analyzing issues:[/bold green] {request.app_path}")
+        
+        result = await problem_resolver.analyze_and_resolve(
+            app_path=request.app_path,
+            error_logs=request.error_logs
+        )
+        
+        # Log resolution
+        audit_logger.log_event(
+            event_type=AuditEventType.COMMAND_EXECUTED,
+            details={
+                "action": "problem_resolution",
+                "app_path": request.app_path,
+                "issues_found": result.get("issues_found", 0),
+                "issues_resolved": result.get("issues_resolved", 0)
+            },
+            success=result.get("status") in ["success", "partial"]
+        )
+        
+        return {
+            "status": "success",
+            "result": result,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except Exception as e:
+        console.print(f"[bold red]Resolution error:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/test/run")
+async def run_tests(request: TestRequest):
+    """
+    Run tests on-demand and return structured report
+    Phase 2: Tester agent with structured test reports
+    """
+    if not tester_agent:
+        raise HTTPException(status_code=503, detail="Tester agent not available")
+    
+    try:
+        console.print(f"[bold green]Running tests:[/bold green] {request.app_path}")
+        
+        result = await tester_agent.run_tests(
+            app_path=request.app_path,
+            test_type=request.test_type,
+            specific_tests=request.specific_tests if request.specific_tests else None,
+            generate_missing=request.generate_missing
+        )
+        
+        # Log test execution
+        audit_logger.log_event(
+            event_type=AuditEventType.COMMAND_EXECUTED,
+            details={
+                "action": "test_execution",
+                "app_path": request.app_path,
+                "test_type": request.test_type,
+                "tests_run": result.get("summary", {}).get("total_tests", 0),
+                "tests_passed": result.get("summary", {}).get("passed", 0),
+                "tests_failed": result.get("summary", {}).get("failed", 0)
+            },
+            success=result.get("status") == "passed"
+        )
+        
+        return result
+        
+    except Exception as e:
+        console.print(f"[bold red]Test execution error:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/preview/create")
+async def create_live_preview(request: LivePreviewRequest):
+    """
+    Create a live preview for a build
+    Phase 2: Live preview bridge with temporary deployments
+    """
+    if not live_preview_bridge:
+        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+    
+    try:
+        console.print(f"[bold green]Creating live preview:[/bold green] {request.build_id}")
+        
+        result = await live_preview_bridge.create_live_preview(
+            build_id=request.build_id,
+            app_path=request.app_path,
+            port=request.port,
+            auto_start=request.auto_start
+        )
+        
+        return result
+        
+    except Exception as e:
+        console.print(f"[bold red]Preview creation error:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/preview/{build_id}/update")
+async def update_live_preview(build_id: str, app_path: str):
+    """Update an existing live preview with new code"""
+    if not live_preview_bridge:
+        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+    
+    try:
+        result = await live_preview_bridge.update_preview(build_id, app_path)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/preview/{build_id}/stop")
+async def stop_live_preview(build_id: str):
+    """Stop a live preview"""
+    if not live_preview_bridge:
+        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+    
+    try:
+        result = await live_preview_bridge.stop_preview(build_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/preview/{build_id}/status")
+async def get_preview_status(build_id: str):
+    """Get status of a live preview"""
+    if not live_preview_bridge:
+        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+    
+    status = live_preview_bridge.get_preview_status(build_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    
+    return status
+
+
+@app.get("/api/preview/list")
+async def list_previews():
+    """List all active live previews"""
+    if not live_preview_bridge:
+        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+    
+    previews = live_preview_bridge.get_all_previews()
+    return {"previews": list(previews.values()), "count": len(previews)}
+
+
+@app.get("/api/collaboration/sessions")
+async def list_collaboration_sessions():
+    """List all active collaboration sessions"""
+    if not collaboration_manager:
+        raise HTTPException(status_code=503, detail="Collaboration manager not available")
+    
+    sessions = collaboration_manager.get_all_active_sessions()
+    return {"sessions": list(sessions.values()), "count": len(sessions)}
+
+
+@app.get("/api/collaboration/history")
+async def get_collaboration_history(limit: int = 50):
+    """Get collaboration history between agents"""
+    if not collaboration_manager:
+        raise HTTPException(status_code=503, detail="Collaboration manager not available")
+    
+    history = collaboration_manager.get_collaboration_history(limit)
+    return {"history": history, "count": len(history)}
+
+
+# ============================================================================
+# PHASE 2: ENHANCED PROBLEM RESOLVER ENDPOINTS
+# ============================================================================
+
+class ProblemResolverRequest(BaseModel):
+    """Phase 2 Problem Resolver request"""
+    session_id: str
+    app_path: str
+    commands: Dict[str, List[str]]  # {"build": [...], "run": [...], "test": [...]}
+    run_mode: str = "diagnose-only"  # "diagnose-only" | "attempt-fix"
+
+
+@app.post("/api/agent/problem-resolver")
+async def start_problem_resolver(request: ProblemResolverRequest):
+    """
+    Start a Phase 2 compliant problem resolver run
+    - Permission-first: stops before destructive operations
+    - Non-destructive: uses auto/* branches
+    - Returns runId for status polling
+    """
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced problem resolver not available")
+    
+    try:
+        # Validate run_mode
+        try:
+            run_mode = RunMode(request.run_mode)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid run_mode: {request.run_mode}")
+        
+        console.print(f"[bold green]Starting problem resolver:[/bold green] {request.session_id}")
+        
+        run_id = await enhanced_resolver.start_resolver_run(
+            session_id=request.session_id,
+            app_path=request.app_path,
+            commands=request.commands,
+            run_mode=run_mode
+        )
+        
+        # Log event
+        audit_logger.log_event(
+            event_type=AuditEventType.COMMAND_EXECUTED,
+            details={
+                "action": "problem_resolver_started",
+                "run_id": run_id,
+                "session_id": request.session_id,
+                "run_mode": request.run_mode
+            },
+            success=True
+        )
+        
+        return {
+            "status": "success",
+            "runId": run_id,
+            "statusUrl": f"/api/agent/problem-resolver/{run_id}/result",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Problem resolver error:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agent/problem-resolver/{run_id}/result")
+async def get_problem_resolver_result(run_id: str):
+    """
+    Get the result of a problem resolver run
+    Returns structured JSON with issues, fixes, PR links, preview URLs, etc.
+    """
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced problem resolver not available")
+    
+    result = enhanced_resolver.get_run_result(run_id)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    return result
+
+
+@app.get("/api/agent/problem-resolver/{run_id}/logs")
+async def get_problem_resolver_logs(run_id: str):
+    """Get full logs for a problem resolver run"""
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced problem resolver not available")
+    
+    logs = enhanced_resolver.get_run_logs(run_id)
+    
+    if logs is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    return {
+        "run_id": run_id,
+        "logs": logs,
+        "count": len(logs),
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+
+
+# ============================================================================
+# CONTEXT AND STATE ENDPOINTS (NEW)
+# ============================================================================
+
+@app.get("/api/session/{session_token}/context")
+async def get_session_context(session_token: str):
+    """Get full session context including metadata, commands, and agent outputs"""
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not available")
+    
+    try:
+        context = session_manager.get_session_context(session_token)
+        
+        if not context:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        return {
+            "status": "success",
+            "context": context,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Error getting session context:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/workflow/{build_id}/state")
+async def get_workflow_state(build_id: str):
+    """Get persisted workflow state for a build"""
+    try:
+        if workflow and hasattr(workflow, 'load_state'):
+            state = await workflow.load_state(build_id)
+            
+            if not state:
+                raise HTTPException(status_code=404, detail="Workflow state not found")
+            
+            return {
+                "status": "success",
+                "build_id": build_id,
+                "state": state,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+        else:
+            raise HTTPException(status_code=503, detail="Workflow state persistence not available")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Error loading workflow state:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/permissions/stats")
+async def get_permissions_stats():
+    """Get permission statistics"""
+    if not permission_manager:
+        raise HTTPException(status_code=503, detail="Permission manager not available")
+    
+    stats = permission_manager.get_stats()
+    return {
+        "status": "success",
+        "stats": stats,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+
+
+@app.get("/api/collaboration/state/{state_key}")
+async def get_collaboration_state(state_key: str):
+    """Get a specific shared state document"""
+    if not collaboration_manager:
+        raise HTTPException(status_code=503, detail="Collaboration manager not available")
+    
+    try:
+        state = await collaboration_manager.get_state(state_key)
+        
+        if not state:
+            raise HTTPException(status_code=404, detail="State not found")
+        
+        return {
+            "status": "success",
+            "state": state,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Error getting collaboration state:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Background task to cleanup expired sessions and instances
 @app.on_event("startup")
 async def startup_cleanup_task():
@@ -790,7 +1381,7 @@ if __name__ == "__main__":
     
     # Simple uvicorn configuration without problematic parameters
     uvicorn.run(
-        "main:app",
+        "coordinator.main:app",
         host=settings.coordinator_host,
         port=settings.coordinator_port,
         reload=True,

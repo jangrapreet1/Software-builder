@@ -1,6 +1,6 @@
 import React from 'react';
 
-type Status = 'detected' | 'building' | 'running' | 'error' | 'stopped' | 'idle';
+type Status = 'detected' | 'building' | 'running' | 'error' | 'stopped' | 'idle' | 'resolving' | 'testing';
 
 interface StatusIndicatorProps {
   status: Status;
@@ -45,6 +45,18 @@ const statusConfig: Record<Status, { icon: string; color: string; bgColor: strin
     color: 'text-gray-400',
     bgColor: 'bg-gray-50',
     label: 'Idle'
+  },
+  resolving: {
+    icon: 'fa-tools fa-spin',
+    color: 'text-purple-600',
+    bgColor: 'bg-purple-100',
+    label: 'Resolving Issues'
+  },
+  testing: {
+    icon: 'fa-vial fa-spin',
+    color: 'text-pink-600',
+    bgColor: 'bg-pink-100',
+    label: 'Running Tests'
   }
 };
 
@@ -87,16 +99,17 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
             <span className="text-sm font-medium text-gray-700">Progress</span>
             <span className="text-sm font-medium text-gray-700">{progress}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div
-              className={`h-2 rounded-full transition-all duration-500 ${
-                status === 'error' ? 'bg-red-500' :
-                status === 'running' ? 'bg-green-500' :
-                'bg-blue-500'
-              }`}
-              style={{ width: `${progress}%` }}
-            />
-          </div>
+          <progress
+            value={Math.min(Math.max(progress, 0), 100)}
+            max={100}
+            className={`w-full h-2 overflow-hidden rounded-full bg-gray-200 [&::-webkit-progress-bar]:bg-gray-200 ${
+              status === 'error'
+                ? '[&::-webkit-progress-value]:bg-red-500 [&::-moz-progress-bar]:bg-red-500'
+                : status === 'running'
+                ? '[&::-webkit-progress-value]:bg-green-500 [&::-moz-progress-bar]:bg-green-500'
+                : '[&::-webkit-progress-value]:bg-blue-500 [&::-moz-progress-bar]:bg-blue-500'
+            }`}
+          />
         </div>
       )}
 

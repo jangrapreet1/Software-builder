@@ -6,6 +6,7 @@ import json
 import uuid
 from typing import TypedDict, Annotated, Sequence
 from datetime import datetime
+from typing import Optional
 from pathlib import Path
 import operator
 import asyncio
@@ -59,12 +60,17 @@ class AppBuilderState(TypedDict):
 
 class AppBuilderWorkflowFixed:
     """
-    Fixed workflow that properly handles async execution
+    Fixed workflow that properly handles async execution with state persistence
     """
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, build_registry=None):
         self.settings = settings
         self.builds = {}  # In-memory build storage
+        self.build_registry = build_registry
+        
+        # Create artifacts directory for state persistence
+        self.artifacts_dir = Path(settings.generated_apps_dir).parent / ".sb_artifacts" / "builds"
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize LLM
         self.llm = ChatGoogleGenerativeAI(
@@ -135,47 +141,56 @@ class AppBuilderWorkflowFixed:
             print(f"Step 1: Analyzing brief for {build_id}")
             state = await self._analyze_brief(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 2: Generate specs
             print(f"Step 2: Generating specs for {build_id}")
             state = await self._generate_specs(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 3: Plan tasks
             print(f"Step 3: Planning tasks for {build_id}")
             state = await self._plan_tasks(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 4: Generate backend
             print(f"Step 4: Generating backend for {build_id}")
             state = await self._generate_backend(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 5: Generate frontend
             print(f"Step 5: Generating frontend for {build_id}")
             state = await self._generate_frontend(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 6: Integrate code
             print(f"Step 6: Integrating code for {build_id}")
             state = await self._integrate_code(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 7: Validate build
             print(f"Step 7: Validating build for {build_id}")
             state = await self._validate_build(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Step 8: Deploy app
             print(f"Step 8: Deploying app for {build_id}")
             state = await self._deploy_app(state)
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             # Mark as complete
             state["build_status"] = "success"
             state["progress"] = 100
             state["current_step"] = "Complete"
             self.builds[build_id] = state
+            await self._persist_state(state)
             
             return {
                 "status": "success",
@@ -423,5 +438,77 @@ class AppBuilderWorkflowFixed:
         """Delete a build"""
         if build_id in self.builds:
             del self.builds[build_id]
+            # Also delete persisted state
+            state_file = self.artifacts_dir / f"{build_id}.json"
+            if state_file.exists():
+                state_file.unlink()
             return {"success": True, "message": "Build deleted"}
         return {"success": False, "message": "Build not found"}
+    
+    async def _persist_state(self, state: AppBuilderState) -> str:
+        """Persist workflow state to .sb_artifacts for recovery and transparency"""
+        try:
+            build_id = state["build_id"]
+            state_file = self.artifacts_dir / f"{build_id}.json"
+            
+            # Create a serializable copy (remove non-serializable objects)
+            serializable_state = {
+                "build_id": state["build_id"],
+                "brief": state["brief"],
+                "project_name": state["project_name"],
+                "requirements": state["requirements"],
+                "features": state["features"],
+                "entities": state["entities"],
+                "user_flows": state["user_flows"],
+                "technical_specs": state["technical_specs"],
+                "backend_tasks": state["backend_tasks"],
+                "frontend_tasks": state["frontend_tasks"],
+                "build_status": state["build_status"],
+                "current_step": state["current_step"],
+                "progress": state["progress"],
+                "errors": state["errors"],
+                "app_url": state["app_url"],
+                "source_path": state["source_path"],
+                "logs": state["logs"],
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            with open(state_file, 'w', encoding='utf-8') as f:
+                json.dump(serializable_state, f, indent=2)
+            
+            print(f"Persisted state for build {build_id}")
+            return str(state_file)
+            
+        except Exception as e:
+            print(f"Failed to persist state: {e}")
+            return ""
+    
+    async def load_state(self, build_id: str) -> Optional[AppBuilderState]:
+        """Load persisted workflow state"""
+        try:
+            state_file = self.artifacts_dir / f"{build_id}.json"
+            if not state_file.exists():
+                return None
+            
+            with open(state_file, 'r', encoding='utf-8') as f:
+                serializable_state = json.load(f)
+            
+            # Reconstruct full state (add empty dicts for code)
+            state = {
+                **serializable_state,
+                "backend_code": {},
+                "frontend_code": {},
+                "integrated_code": {},
+                "docker_config": {},
+                "test_results": {}
+            }
+            
+            return state
+            
+        except Exception as e:
+            print(f"Failed to load state: {e}")
+            return None
+    
+    def get_state_path(self, build_id: str) -> str:
+        """Get path to persisted state file"""
+        return str(self.artifacts_dir / f"{build_id}.json")

@@ -51,7 +51,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
       if (data.logs) {
         // Parse logs if they're strings
         const parsedLogs = typeof data.logs === 'string'
-          ? data.logs.split('\n').map((line: string, idx: number) => ({
+          ? data.logs.split('\n').map((line: string) => ({
               timestamp: new Date().toISOString(),
               level: 'info' as const,
               message: line

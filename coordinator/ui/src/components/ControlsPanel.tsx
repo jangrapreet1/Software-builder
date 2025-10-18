@@ -28,12 +28,16 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
 }) => {
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [localSessionId, setLocalSessionId] = useState<string | null>(null);
 
   const handleLaunchClick = () => {
+    const effectiveSessionId = sessionId ?? localSessionId ?? `session-${Date.now()}`;
+    setLocalSessionId(effectiveSessionId);
+
     if (!permissionGranted) {
       setShowPermissionModal(true);
     } else {
-      onLaunch(sessionId || 'default-session');
+      onLaunch(effectiveSessionId);
     }
   };
 
@@ -45,11 +49,14 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
         ...(detectedCommands?.runCmd || [])
       ];
 
+      const effectiveSessionId = sessionId ?? localSessionId ?? `session-${Date.now()}`;
+      setLocalSessionId(effectiveSessionId);
+
       const response = await fetch('/api/session/permissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: sessionId || 'default-session',
+          session_id: effectiveSessionId,
           actions: ['allow_build', 'allow_run'],
           commands: commands,
           duration: 3600
@@ -59,7 +66,7 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
       if (response.ok) {
         setPermissionGranted(true);
         setShowPermissionModal(false);
-        onLaunch(sessionId || 'default-session');
+        onLaunch(effectiveSessionId);
       } else {
         alert('Failed to grant permission');
       }

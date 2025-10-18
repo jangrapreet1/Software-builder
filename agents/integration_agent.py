@@ -423,8 +423,30 @@ DEBUG=True
         self._write_file(project_path / ".env.example", env_content)
     
     async def validate(self, source_path: str) -> dict:
-        """Validate the generated application"""
-        # Basic validation - check if key files exist
+        """Validate the generated application with comprehensive checks"""
+        try:
+            # Use BuildValidator for comprehensive validation
+            from services.build_validator import BuildValidator
+            
+            validator = BuildValidator()
+            validation_results = await validator.validate_build(source_path)
+            
+            return validation_results
+            
+        except ImportError:
+            # Fallback to basic validation if BuildValidator not available
+            return await self._basic_validate(source_path)
+        except Exception as e:
+            return {
+                "status": "error",
+                "score": 0,
+                "message": f"Validation failed: {str(e)}",
+                "checks_passed": 0,
+                "checks_failed": 1
+            }
+    
+    async def _basic_validate(self, source_path: str) -> dict:
+        """Basic validation fallback"""
         path = Path(source_path)
         
         validation_results = {

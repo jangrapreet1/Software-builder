@@ -1,0 +1,43 @@
+{
+  "build_config:environment file missing": {
+    "category": "build_config",
+    "pattern": "environment file missing",
+    "occurrences": 2,
+    "first_seen": "2025-10-16T19:57:00.887942Z",
+    "last_seen": "2025-10-16T19:57:00.887942Z",
+    "affected_builds": [
+      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0"
+    ],
+    "suggested_fixes": [
+      "Created .env file from .env.example"
+    ]
+  },
+  "database:database operations without error handling": {
+    "category": "database",
+    "pattern": "database operations without error handling",
+    "occurrences": 4,
+    "first_seen": "2025-10-16T19:57:00.889029Z",
+    "last_seen": "2025-10-16T19:57:00.890742Z",
+    "affected_builds": [
+      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0"
+    ],
+    "suggested_fixes": [
+      "Added error handling to models.py",
+      "Added error handling to routes.py",
+      "Added error handling to env.py"
+    ]
+  },
+  "api_network:api calls without timeout configuration": {
+    "category": "api_network",
+    "pattern": "api calls without timeout configuration",
+    "occurrences": 2,
+    "first_seen": "2025-10-16T19:57:00.891748Z",
+    "last_seen": "2025-10-16T19:57:00.891748Z",
+    "affected_builds": [
+      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0"
+    ],
+    "suggested_fixes": [
+      "Added timeout to API calls in test_api.py"
+    ]
+  }
+}
