@@ -1,0 +1,94 @@
+{
+  "template_id": "analytics-dashboard",
+  "name": "Analytics Dashboard",
+  "description": "Data visualization dashboard with charts and metrics",
+  "category": "analytics",
+  "brief": "Build an analytics dashboard with real-time data visualization, charts, metrics, and reporting capabilities",
+  "entities": [
+    {
+      "name": "Metric",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "value",
+          "type": "float",
+          "required": true
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "timestamp",
+          "type": "datetime",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "Widget",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "config",
+          "type": "dict",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "features": [
+    "Real-time data visualization",
+    "Multiple chart types",
+    "Customizable dashboards",
+    "Metric tracking",
+    "Export reports",
+    "Alerts and notifications",
+    "Data filtering"
+  ],
+  "technical_specs": {
+    "backend_framework": "fastapi",
+    "frontend_framework": "react-vite",
+    "database": "postgresql",
+    "authentication": "jwt"
+  },
+  "tags": [
+    "dashboard",
+    "analytics",
+    "visualization",
+    "metrics"
+  ],
+  "difficulty": "medium",
+  "estimated_time": 6,
+  "created_at": "2025-10-18T21:01:48.919767Z",
+  "usage_count": 0
+}

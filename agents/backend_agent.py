@@ -1,8 +1,9 @@
 """
 Backend Agent - Generates FastAPI backend code
 """
+import ast
 import json
-from typing import Any
+from typing import Any, Dict, List
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage, SystemMessage
 
@@ -42,6 +43,16 @@ class BackendAgent:
             "tests": await self._generate_tests(entities),
             "alembic": self._generate_alembic_config()
         }
+        
+        # NEW: Validate generated code quality
+        validation = await self._validate_code_quality(code)
+        
+        if validation["has_critical_issues"]:
+            # Auto-fix critical issues
+            code = await self._fix_code_issues(code, validation["issues"])
+        
+        # Generate migrations
+        code["migrations"] = await self.generate_migrations(entities)
         
         return code
     
@@ -211,3 +222,119 @@ Use pytest-asyncio for async tests."""
                     lines = lines[1:]
                 return "\n".join(lines).strip()
         return response.strip()
+    
+    async def _validate_code_quality(self, code: dict) -> Dict:
+        """Validate generated code for syntax and quality issues"""
+        issues = []
+        
+        for file_name, content in code.items():
+            if not isinstance(content, str):
+                continue
+            
+            # Check Python syntax
+            try:
+                ast.parse(content)
+            except SyntaxError as e:
+                issues.append({
+                    "file": file_name,
+                    "error": str(e),
+                    "severity": "critical",
+                    "line": e.lineno
+                })
+            
+            # Check for dangerous patterns
+            if "eval(" in content or "exec(" in content:
+                issues.append({
+                    "file": file_name,
+                    "error": "Unsafe eval/exec usage",
+                    "severity": "critical"
+                })
+            
+            # Check for missing imports
+            if file_name == "main" and "FastAPI" in content and "from fastapi import" not in content:
+                issues.append({
+                    "file": file_name,
+                    "error": "Missing FastAPI import",
+                    "severity": "high"
+                })
+        
+        return {
+            "has_critical_issues": any(i["severity"] == "critical" for i in issues),
+            "issues": issues
+        }
+    
+    async def _fix_code_issues(self, code: dict, issues: List[Dict]) -> dict:
+        """Auto-fix common code issues"""
+        fixed_code = code.copy()
+        
+        for issue in issues:
+            if issue["severity"] == "critical":
+                file_name = issue["file"]
+                if file_name in fixed_code:
+                    content = fixed_code[file_name]
+                    
+                    # Remove eval/exec
+                    if "eval" in issue["error"].lower() or "exec" in issue["error"].lower():
+                        content = content.replace("eval(", "# REMOVED: eval(")
+                        content = content.replace("exec(", "# REMOVED: exec(")
+                    
+                    # Add missing imports
+                    if "Missing" in issue["error"] and "import" in issue["error"]:
+                        if "FastAPI" in issue["error"]:
+                            content = "from fastapi import FastAPI, Request\n" + content
+                    
+                    fixed_code[file_name] = content
+        
+        return fixed_code
+    
+    async def generate_migrations(self, entities: list[dict]) -> str:
+        """Generate Alembic migration scripts"""
+        system_prompt = """Generate an Alembic migration script for these database models.
+        
+Include:
+- Table creation with proper column types
+- Primary key constraints
+- Foreign key relationships with proper cascades
+- Indexes for foreign keys and frequently queried fields
+- NOT NULL constraints
+- Unique constraints where appropriate
+- Proper downgrade logic
+
+Use Alembic op.* methods."""
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Entities:\n{json.dumps(entities, indent=2)}\n\nGenerate migration")
+        ]
+        
+        try:
+            response = await self.llm.ainvoke(messages)
+            return self._extract_code(response.content) or self._get_default_migration(entities)
+        except Exception:
+            return self._get_default_migration(entities)
+    
+    def _get_default_migration(self, entities: list[dict]) -> str:
+        """Generate default migration template"""
+        return '''"""Initial migration
+
+Revision ID: 001
+Create Date: 2024-01-01
+
+"""
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers
+revision = '001'
+down_revision = None
+branch_labels = None
+depends_on = None
+
+def upgrade():
+    # Create tables based on models
+    pass
+
+def downgrade():
+    # Drop tables
+    pass
+'''

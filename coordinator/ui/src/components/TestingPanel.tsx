@@ -47,12 +47,12 @@ export const TestingPanel: React.FC<TestingPanelProps> = ({
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusBgClass = (status: string) => {
     switch (status) {
-      case 'passed': return 'green';
-      case 'failed': return 'red';
-      case 'no_tests': return 'yellow';
-      default: return 'gray';
+      case 'passed': return 'bg-green-50 border-green-200';
+      case 'failed': return 'bg-red-50 border-red-200';
+      case 'no_tests': return 'bg-yellow-50 border-yellow-200';
+      default: return 'bg-gray-50 border-gray-200';
     }
   };
 
@@ -119,7 +119,7 @@ export const TestingPanel: React.FC<TestingPanelProps> = ({
       {testResult && (
         <div className="mt-6">
           {/* Status Badge */}
-          <div className={`p-4 rounded-lg mb-4 bg-${getStatusColor(testResult.status)}-50 border border-${getStatusColor(testResult.status)}-200`}>
+          <div className={`p-4 rounded-lg mb-4 border ${getStatusBgClass(testResult.status)}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <i className={`fas ${

@@ -30,13 +30,18 @@ from services.build_registry import BuildRegistry
 from services.audit_logger import audit_logger, AuditEventType
 from services.run_audit_logger import RunAuditLogger
 from services.agent_collaboration_manager import CollaborationManager, LivePreviewBridge
+from services.metrics_collector import get_metrics_collector
+from services.error_handler_middleware import add_error_handling
 from agents.problem_resolver_agent import ProblemResolverAgent
 from agents.enhanced_problem_resolver import EnhancedProblemResolverAgent, RunMode
 from agents.tester_agent import TesterAgent
 # Enhanced features
 try:
     from workflows.app_builder_enhanced import EnhancedAppBuilderWorkflow
-    from api.enhanced_endpoints import router as enhanced_router, initialize_enhanced_services
+    from api.enhanced_endpoints_v2 import (
+        router as enhanced_router_v2,
+        initialize_enhanced_services,
+    )
     ENHANCED_FEATURES_AVAILABLE = True
     console.print("[green]✓ Enhanced features available[/green]")
 except ImportError as e:
@@ -64,11 +69,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add enhanced error handling middleware
+add_error_handling(app, debug=os.getenv("DEBUG", "false").lower() == "true")
+
 
 # Include enhanced API router if available
 if ENHANCED_FEATURES_AVAILABLE:
     try:
-        app.include_router(enhanced_router)
+        app.include_router(enhanced_router_v2)
         console.print("[green]✓ Enhanced API endpoints registered[/green]")
     except Exception as e:
         console.print(f"[yellow]⚠ Enhanced API registration failed: {e}[/yellow]")
@@ -84,6 +92,7 @@ GENERATED_DIR = Path(settings.generated_apps_dir).resolve()
 build_registry = BuildRegistry(REPO_ROOT)
 build_registry.bootstrap_from_generated(GENERATED_DIR)
 run_audit_logger = RunAuditLogger(str(REPO_ROOT / ".sb_artifacts"))
+metrics_collector = get_metrics_collector()
 
 # Initialize sandbox services
 try:
@@ -1315,6 +1324,200 @@ async def get_collaboration_state(state_key: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# OBSERVABILITY & METRICS ENDPOINTS
+# ============================================================================
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Get all collected metrics in JSON format"""
+    try:
+        metrics = metrics_collector.get_all_metrics()
+        return {
+            "status": "success",
+            "metrics": metrics,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/metrics/prometheus")
+async def get_prometheus_metrics():
+    """Export metrics in Prometheus format"""
+    from fastapi.responses import PlainTextResponse
+    
+    try:
+        prometheus_data = metrics_collector.export_prometheus_format()
+        return PlainTextResponse(
+            content=prometheus_data,
+            media_type="text/plain; version=0.0.4"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/metrics/performance")
+async def get_performance_report():
+    """Get comprehensive performance report"""
+    try:
+        report = metrics_collector.get_performance_report()
+        return {
+            "status": "success",
+            "report": report,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/metrics/health")
+async def get_system_health():
+    """Get system health metrics"""
+    try:
+        health = metrics_collector.get_system_health()
+        return {
+            "status": "success",
+            "health": health,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/registry/stats")
+async def get_registry_stats():
+    """Get build registry statistics"""
+    try:
+        stats = build_registry.get_stats()
+        return {
+            "status": "success",
+            "stats": stats,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CRASH RECOVERY & STATE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+class RecoveryRequest(BaseModel):
+    """Build recovery request"""
+    build_id: str
+    resume_from_step: str = None
+
+
+@app.post("/api/build/{build_id}/recover")
+async def recover_build(build_id: str):
+    """
+    Recover a crashed or failed build from last checkpoint
+    Uses enhanced state manager to restore build state and resume
+    """
+    try:
+        # Check if enhanced workflow is available
+        if not enhanced_workflow:
+            raise HTTPException(
+                status_code=503,
+                detail="Enhanced workflow with crash recovery not available"
+            )
+        
+        console.print(f"[bold cyan]Attempting to recover build:[/bold cyan] {build_id}")
+        
+        # Try to recover the build
+        result = await enhanced_workflow.recover_build(build_id)
+        
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="No recoverable state found for this build"
+            )
+        
+        return {
+            "status": "success",
+            "build_id": build_id,
+            "recovered_state": result,
+            "message": "Build state recovered successfully",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Recovery error:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/build/{build_id}/resume")
+async def resume_build(build_id: str, resume_from_step: str = None):
+    """
+    Resume a paused or failed build from a specific step
+    """
+    try:
+        if not enhanced_workflow:
+            raise HTTPException(
+                status_code=503,
+                detail="Enhanced workflow required for build resumption"
+            )
+        
+        console.print(f"[bold cyan]Resuming build:[/bold cyan] {build_id}")
+        
+        result = await enhanced_workflow.resume_build(
+            build_id=build_id,
+            from_step=resume_from_step
+        )
+        
+        return {
+            "status": "success",
+            "build_id": build_id,
+            "result": result,
+            "message": "Build resumed successfully",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Resume error:[/bold red] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/build/{build_id}/checkpoints")
+async def get_build_checkpoints(build_id: str):
+    """
+    Get all available checkpoints for a build
+    Shows recovery points and state history
+    """
+    try:
+        if not enhanced_workflow:
+            raise HTTPException(
+                status_code=503,
+                detail="Enhanced workflow required for checkpoint access"
+            )
+        
+        checkpoints = await enhanced_workflow.get_build_checkpoints(build_id)
+        
+        if not checkpoints:
+            raise HTTPException(
+                status_code=404,
+                detail="No checkpoints found for this build"
+            )
+        
+        return {
+            "status": "success",
+            "build_id": build_id,
+            "checkpoints": checkpoints,
+            "count": len(checkpoints),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Background task to cleanup expired sessions and instances
 @app.on_event("startup")
 async def startup_cleanup_task():
@@ -1380,10 +1583,13 @@ if __name__ == "__main__":
     console.print(f"[CONFIG] Using polling: Yes\n")
     
     # Simple uvicorn configuration without problematic parameters
+    # Disable reload to avoid file system loop errors with node_modules symlinks
+    # Alternative: Use reload with exclusions if you need hot-reload during development
     uvicorn.run(
         "coordinator.main:app",
         host=settings.coordinator_host,
         port=settings.coordinator_port,
-        reload=True,
+        reload=False,  # Set to True for dev, False for production
+        reload_excludes=["**/node_modules/**", "**/generated/**", "**/.git/**"] if False else None,
         log_level="info"
     )

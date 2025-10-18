@@ -1,0 +1,109 @@
+{
+  "template_id": "project-management",
+  "name": "Project Management Tool",
+  "description": "Team collaboration tool with projects, tasks, and milestones",
+  "category": "productivity",
+  "brief": "Build a project management system with teams, projects, tasks, milestones, file attachments, and collaboration features",
+  "entities": [
+    {
+      "name": "Project",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "start_date",
+          "type": "date",
+          "required": false
+        },
+        {
+          "name": "end_date",
+          "type": "date",
+          "required": false
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": "active"
+        }
+      ]
+    },
+    {
+      "name": "Task",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": "todo"
+        },
+        {
+          "name": "priority",
+          "type": "string",
+          "default": "medium"
+        },
+        {
+          "name": "due_date",
+          "type": "datetime",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "Team",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "features": [
+    "Multi-project management",
+    "Task assignment and tracking",
+    "Team collaboration",
+    "Milestones and deadlines",
+    "File attachments",
+    "Activity timeline",
+    "Reports and analytics"
+  ],
+  "technical_specs": {
+    "backend_framework": "fastapi",
+    "frontend_framework": "react-vite",
+    "database": "postgresql",
+    "authentication": "jwt"
+  },
+  "tags": [
+    "project-management",
+    "collaboration",
+    "teams",
+    "tasks"
+  ],
+  "difficulty": "hard",
+  "estimated_time": 10,
+  "created_at": "2025-10-18T21:01:48.919767Z",
+  "usage_count": 0
+}

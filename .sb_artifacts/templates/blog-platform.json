@@ -1,0 +1,99 @@
+{
+  "template_id": "blog-platform",
+  "name": "Blog Platform",
+  "description": "Content publishing platform with posts, comments, and categories",
+  "category": "content",
+  "brief": "Build a blog platform with posts, comments, categories, tags, user authentication, and markdown support",
+  "entities": [
+    {
+      "name": "Post",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "excerpt",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "published",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "published_at",
+          "type": "datetime",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "Comment",
+      "fields": [
+        {
+          "name": "content",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "approved",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "Category",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "features": [
+    "User authentication",
+    "Create and publish posts",
+    "Markdown support",
+    "Comments system",
+    "Categories and tags",
+    "Search functionality",
+    "SEO-friendly URLs"
+  ],
+  "technical_specs": {
+    "backend_framework": "fastapi",
+    "frontend_framework": "nextjs",
+    "database": "postgresql",
+    "authentication": "jwt"
+  },
+  "tags": [
+    "blog",
+    "content",
+    "publishing",
+    "cms"
+  ],
+  "difficulty": "medium",
+  "estimated_time": 5,
+  "created_at": "2025-10-18T21:01:48.917753Z",
+  "usage_count": 0
+}

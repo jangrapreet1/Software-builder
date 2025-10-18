@@ -5,6 +5,7 @@ Runs tests only when requested by users
 import os
 import re
 import json
+import asyncio
 import subprocess
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -129,6 +130,11 @@ class TesterAgent:
                 elif "vitest" in deps:
                     info["framework"] = "vitest"
                     info["has_tests"] = "test" in scripts
+                elif "@playwright/test" in deps or "playwright" in deps:
+                    info["framework"] = "playwright"
+                    info["has_tests"] = "test" in scripts or any(
+                        key.startswith("playwright") for key in scripts.keys()
+                    )
                 
                 # Find test files
                 test_patterns = ["*.test.js", "*.test.ts", "*.spec.js", "*.spec.ts"]
@@ -138,6 +144,12 @@ class TesterAgent:
                 
                 if info["test_files"]:
                     info["has_tests"] = True
+
+                # Detect Playwright configuration files
+                if (app_path / "playwright.config.ts").exists() or (app_path / "playwright.config.js").exists():
+                    info["framework"] = info.get("framework") or "playwright"
+                    info["has_tests"] = True
+                    info.setdefault("test_directory", "tests")
                     
             except Exception:
                 pass
@@ -324,6 +336,8 @@ describe('{component_name}', () => {{
                 results = await self._run_pytest(app_path, specific_tests)
             elif test_info["framework"] in ["jest", "vitest", "mocha"]:
                 results = await self._run_npm_tests(app_path, test_info["framework"])
+            elif test_info["framework"] == "playwright":
+                results = await self._run_playwright_mcp(app_path, specific_tests)
             else:
                 results["output"] = "No test framework detected"
                 
@@ -443,6 +457,45 @@ describe('{component_name}', () => {{
                 "output": "",
                 "error_output": str(e)
             }
+
+    async def _run_playwright_mcp(self, app_path: Path, specific_tests: Optional[List[str]]) -> Dict:
+        """Run Playwright tests using the MCP Playwright server"""
+        from services.mcp_manager import get_mcp_manager, MCPManagerError
+
+        manager = get_mcp_manager()
+
+        try:
+            result = await asyncio.to_thread(
+                manager.run_playwright_tests,
+                app_path,
+                specific_tests
+            )
+        except MCPManagerError as error:
+            return {
+                "framework": "playwright",
+                "tests_run": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "failures": [],
+                "output": "",
+                "error_output": str(error),
+                "exit_code": 1
+            }
+
+        summary = result.get("summary", {})
+
+        return {
+            "framework": "playwright",
+            "tests_run": summary.get("tests_run", 0),
+            "tests_passed": summary.get("tests_passed", 0),
+            "tests_failed": summary.get("tests_failed", 0),
+            "tests_skipped": summary.get("tests_skipped", 0),
+            "failures": summary.get("failures", []),
+            "output": result.get("stdout", ""),
+            "error_output": result.get("stderr", ""),
+            "exit_code": result.get("exit_code", 1)
+        }
     
     def _create_test_report(self, test_results: Dict, test_info: Dict) -> Dict:
         """Create structured test report for UI consumption"""

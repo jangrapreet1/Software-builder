@@ -1,0 +1,104 @@
+{
+  "template_id": "ecommerce-store",
+  "name": "E-commerce Store",
+  "description": "Online store with products, cart, and order management",
+  "category": "ecommerce",
+  "brief": "Build an e-commerce platform with product catalog, shopping cart, order management, and payment processing",
+  "entities": [
+    {
+      "name": "Product",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "price",
+          "type": "float",
+          "required": true
+        },
+        {
+          "name": "stock",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "image_url",
+          "type": "url",
+          "required": false
+        },
+        {
+          "name": "active",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "total_amount",
+          "type": "float",
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "default": "pending"
+        },
+        {
+          "name": "shipping_address",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "OrderItem",
+      "fields": [
+        {
+          "name": "quantity",
+          "type": "int",
+          "required": true
+        },
+        {
+          "name": "price",
+          "type": "float",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "features": [
+    "Product catalog with search",
+    "Shopping cart",
+    "Order management",
+    "User authentication",
+    "Product reviews",
+    "Inventory management",
+    "Order tracking"
+  ],
+  "technical_specs": {
+    "backend_framework": "fastapi",
+    "frontend_framework": "react-vite",
+    "database": "postgresql",
+    "authentication": "jwt"
+  },
+  "tags": [
+    "ecommerce",
+    "store",
+    "shopping",
+    "products"
+  ],
+  "difficulty": "hard",
+  "estimated_time": 8,
+  "created_at": "2025-10-18T21:01:48.918760Z",
+  "usage_count": 0
+}

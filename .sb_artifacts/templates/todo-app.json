@@ -1,0 +1,78 @@
+{
+  "template_id": "todo-app",
+  "name": "Todo & Task Manager",
+  "description": "Simple todo list application with task management",
+  "category": "productivity",
+  "brief": "Build a task management application with user authentication, task creation, editing, deletion, categories, and due dates",
+  "entities": [
+    {
+      "name": "Task",
+      "fields": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "completed",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "due_date",
+          "type": "datetime",
+          "required": false
+        },
+        {
+          "name": "priority",
+          "type": "string",
+          "default": "medium"
+        }
+      ]
+    },
+    {
+      "name": "Category",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "color",
+          "type": "string",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "features": [
+    "User authentication (JWT)",
+    "Create, read, update, delete tasks",
+    "Task categories",
+    "Task filtering and sorting",
+    "Due date reminders",
+    "Task completion tracking"
+  ],
+  "technical_specs": {
+    "backend_framework": "fastapi",
+    "frontend_framework": "react-vite",
+    "database": "postgresql",
+    "authentication": "jwt"
+  },
+  "tags": [
+    "productivity",
+    "tasks",
+    "todo",
+    "simple"
+  ],
+  "difficulty": "easy",
+  "estimated_time": 3,
+  "created_at": "2025-10-18T21:01:48.917753Z",
+  "usage_count": 0
+}

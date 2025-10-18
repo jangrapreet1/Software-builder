@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FrameworkOption } from '../types';
+import { LoadingSpinner } from './LoadingSpinner';
 
 interface ControlsPanelProps {
   instanceId?: string;
@@ -7,30 +9,61 @@ interface ControlsPanelProps {
     buildCmd?: string[];
     runCmd?: string[];
   };
+  frontendOptions: FrameworkOption[];
+  backendOptions: FrameworkOption[];
+  selectedFrontend?: string;
+  selectedBackend?: string;
+  onFrontendChange: (frameworkId: string) => void;
+  onBackendChange: (frameworkId: string) => void;
   onLaunch: (sessionId: string) => void;
   onStop: (instanceId: string) => void;
   onDownload: () => void;
   onRequestTests?: () => void;
   onOpenPR?: () => void;
   isRunning?: boolean;
+  isLoadingFrameworks?: boolean;
 }
 
 export const ControlsPanel: React.FC<ControlsPanelProps> = ({
   instanceId,
   sessionId,
   detectedCommands,
+  frontendOptions,
+  backendOptions,
+  selectedFrontend,
+  selectedBackend,
+  onFrontendChange,
+  onBackendChange,
   onLaunch,
   onStop,
   onDownload,
   onRequestTests,
   onOpenPR,
-  isRunning = false
+  isRunning = false,
+  isLoadingFrameworks = false
 }) => {
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [localSessionId, setLocalSessionId] = useState<string | null>(null);
 
+  const handleBackendSelect = (value: string) => {
+    if (value) {
+      onBackendChange(value);
+    }
+  };
+
+  const handleFrontendSelect = (value: string) => {
+    if (value) {
+      onFrontendChange(value);
+    }
+  };
+
   const handleLaunchClick = () => {
+    if (!selectedBackend || !selectedFrontend) {
+      alert('Please select both backend and frontend frameworks.');
+      return;
+    }
+
     const effectiveSessionId = sessionId ?? localSessionId ?? `session-${Date.now()}`;
     setLocalSessionId(effectiveSessionId);
 
@@ -42,6 +75,11 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
   };
 
   const handleGrantPermission = async () => {
+    if (!selectedBackend || !selectedFrontend) {
+      alert('Please select both backend and frontend frameworks.');
+      return;
+    }
+
     // Call permission API
     try {
       const commands = [
@@ -83,11 +121,79 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
           <i className="fas fa-sliders-h mr-2"></i>
           Controls
         </h3>
-        
+
+        {isLoadingFrameworks ? (
+          <div className="py-8">
+            <LoadingSpinner size="md" message="Loading framework options..." />
+          </div>
+        ) : (
+          <>
+        <div className="grid gap-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Backend Framework
+            </label>
+            <select
+              value={selectedBackend || ''}
+              onChange={(event) => handleBackendSelect(event.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Select backend framework"
+              disabled={!backendOptions.length || isLoadingFrameworks}
+            >
+              <option value="" disabled>
+                Select backend technology
+              </option>
+              {backendOptions.map((framework) => (
+                <option key={framework.id} value={framework.id}>
+                  {framework.name} · {framework.language.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            {selectedBackend && (
+              <p className="mt-2 text-xs text-gray-600">
+                {backendOptions.find((fw) => fw.id === selectedBackend)?.description}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Frontend Framework
+            </label>
+            <select
+              value={selectedFrontend || ''}
+              onChange={(event) => handleFrontendSelect(event.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Select frontend framework"
+              disabled={!frontendOptions.length}
+            >
+              <option value="" disabled>
+                Select frontend technology
+              </option>
+              {frontendOptions.map((framework) => (
+                <option key={framework.id} value={framework.id}>
+                  {framework.name} · {framework.language.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            {selectedFrontend && (
+              <p className="mt-2 text-xs text-gray-600">
+                {frontendOptions.find((fw) => fw.id === selectedFrontend)?.description}
+              </p>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <button
             onClick={handleLaunchClick}
-            disabled={isRunning}
+            disabled={
+              isRunning ||
+              !selectedBackend ||
+              !selectedFrontend ||
+              !backendOptions.length ||
+              !frontendOptions.length
+            }
             className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center space-x-2"
             title="Launch application"
           >
@@ -137,8 +243,10 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
             </button>
           )}
         </div>
+        </>
+        )}
 
-        {!permissionGranted && (
+        {!permissionGranted && !isLoadingFrameworks && (
           <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
             <div className="flex items-start space-x-2">
               <i className="fas fa-exclamation-triangle text-yellow-600 mt-1"></i>

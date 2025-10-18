@@ -1,0 +1,79 @@
+{
+  "template_id": "social-media",
+  "name": "Social Media Platform",
+  "description": "Social networking app with posts, likes, and follows",
+  "category": "social",
+  "brief": "Build a social media platform with user profiles, posts, likes, comments, following system, and feed",
+  "entities": [
+    {
+      "name": "Post",
+      "fields": [
+        {
+          "name": "content",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "image_url",
+          "type": "url",
+          "required": false
+        },
+        {
+          "name": "likes_count",
+          "type": "int",
+          "default": 0
+        }
+      ]
+    },
+    {
+      "name": "Comment",
+      "fields": [
+        {
+          "name": "content",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "Follow",
+      "fields": [
+        {
+          "name": "follower_id",
+          "type": "int",
+          "required": true
+        },
+        {
+          "name": "following_id",
+          "type": "int",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "features": [
+    "User profiles",
+    "Create and share posts",
+    "Like and comment on posts",
+    "Follow/unfollow users",
+    "News feed algorithm",
+    "Notifications",
+    "User search"
+  ],
+  "technical_specs": {
+    "backend_framework": "fastapi",
+    "frontend_framework": "react-vite",
+    "database": "postgresql",
+    "authentication": "jwt"
+  },
+  "tags": [
+    "social",
+    "networking",
+    "posts",
+    "likes"
+  ],
+  "difficulty": "hard",
+  "estimated_time": 10,
+  "created_at": "2025-10-18T21:01:48.918760Z",
+  "usage_count": 0
+}

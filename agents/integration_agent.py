@@ -57,6 +57,9 @@ class IntegrationAgent:
         # Create root .env file
         await self._create_env_file(project_path)
         
+        # NEW: Create CI/CD pipelines
+        await self._create_cicd_pipelines(project_path, project_name)
+        
         return {
             "code": {
                 "backend": backend_code,
@@ -506,6 +509,24 @@ DEBUG=True
                 "status": "failed",
                 "error": str(e)
             }
+    
+    async def _create_cicd_pipelines(self, project_path: Path, project_name: str):
+        """Create CI/CD pipeline configurations"""
+        from services.cicd_generator import CICDGenerator
+        
+        # GitHub Actions
+        github_workflow = CICDGenerator.generate_github_actions(project_name)
+        github_dir = project_path / ".github" / "workflows"
+        github_dir.mkdir(parents=True, exist_ok=True)
+        self._write_file(github_dir / "ci.yml", github_workflow)
+        
+        # GitLab CI
+        gitlab_ci = CICDGenerator.generate_gitlab_ci(project_name)
+        self._write_file(project_path / ".gitlab-ci.yml", gitlab_ci)
+        
+        # Docker Compose for CI
+        docker_compose_ci = CICDGenerator.generate_docker_compose_ci()
+        self._write_file(project_path / "docker-compose.ci.yml", docker_compose_ci)
     
     def _write_file(self, file_path: Path, content: str):
         """Write content to file"""

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { LivePreview } from './components/LivePreview';
-import { ControlsPanel } from './components/ControlsPanel';
 import { StatusIndicator } from './components/StatusIndicator';
 import { LogsPanel } from './components/LogsPanel';
 import { ProblemResolverPanel } from './components/ProblemResolverPanel';
@@ -10,6 +9,10 @@ import { ProjectExplorer } from './components/ProjectExplorer';
 import { NotificationSystem, useNotifications } from './components/NotificationSystem';
 import { SessionContextPanel } from './components/SessionContextPanel';
 import { PermissionsStatsPanel } from './components/PermissionsStatsPanel';
+import { FrameworkOption } from './types';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { LoadingSpinner } from './components/LoadingSpinner';
+import { apiClient } from './utils/apiClient';
 
 interface InstanceState {
   instanceId?: string;
@@ -34,7 +37,18 @@ const App: React.FC = () => {
   const [detectedCommands, setDetectedCommands] = useState<{buildCmd?: string[]; runCmd?: string[]}>({});
   const [appPath, setAppPath] = useState('./generated/my-app');
   const [activePage, setActivePage] = useState<ActivePage>('live-preview');
+  const [backendOptions, setBackendOptions] = useState<FrameworkOption[]>([]);
+  const [frontendOptions, setFrontendOptions] = useState<FrameworkOption[]>([]);
+  const [selectedBackend, setSelectedBackend] = useState<string>('');
+  const [selectedFrontend, setSelectedFrontend] = useState<string>('');
+  const [frameworksError, setFrameworksError] = useState<string | null>(null);
+  const [isLoadingFrameworks, setIsLoadingFrameworks] = useState(true);
   const { notifications, addNotification, dismissNotification } = useNotifications();
+
+  // Set up API client notification handler
+  useEffect(() => {
+    apiClient.setNotificationHandler(addNotification);
+  }, [addNotification]);
 
   // Poll instance status
   useEffect(() => {
@@ -57,6 +71,46 @@ const App: React.FC = () => {
       return () => clearInterval(interval);
     }
   }, [instance.instanceId, instance.status]);
+
+  useEffect(() => {
+    const fetchFrameworks = async () => {
+      try {
+        setIsLoadingFrameworks(true);
+        setFrameworksError(null);
+
+        const [backendResponse, frontendResponse] = await Promise.all([
+          fetch('/api/v2/frameworks?framework_type=backend'),
+          fetch('/api/v2/frameworks?framework_type=frontend')
+        ]);
+
+        if (!backendResponse.ok || !frontendResponse.ok) {
+          throw new Error('Failed to load framework options');
+        }
+
+        const backendData = await backendResponse.json();
+        const frontendData = await frontendResponse.json();
+
+        const backendList = Array.isArray(backendData.frameworks) ? backendData.frameworks : [];
+        const frontendList = Array.isArray(frontendData.frameworks) ? frontendData.frameworks : [];
+
+        setBackendOptions(backendList);
+        setFrontendOptions(frontendList);
+
+        if (!selectedBackend && backendList.length > 0) {
+          setSelectedBackend(backendList[0].id);
+        }
+        if (!selectedFrontend && frontendList.length > 0) {
+          setSelectedFrontend(frontendList[0].id);
+        }
+      } catch (error: any) {
+        setFrameworksError(error?.message ?? 'Unable to load framework options');
+      } finally {
+        setIsLoadingFrameworks(false);
+      }
+    };
+
+    fetchFrameworks();
+  }, []);
 
   const handleDetect = async () => {
     try {
@@ -102,7 +156,11 @@ const App: React.FC = () => {
           cpu_limit: 1.0,
           memory_limit: '512m',
           timeout: 3600,
-          session_id: sessionId
+          session_id: sessionId,
+          environment: {
+            APPBUILDER_SELECTED_BACKEND: selectedBackend,
+            APPBUILDER_SELECTED_FRONTEND: selectedFrontend
+          }
         })
       });
 
@@ -222,9 +280,28 @@ const App: React.FC = () => {
       />
 
       {activePage === 'project-explorer' ? (
-        <ProjectExplorer />
+        <ErrorBoundary>
+          <ProjectExplorer
+            detectedCommands={detectedCommands}
+            backendOptions={backendOptions}
+            frontendOptions={frontendOptions}
+            selectedBackend={selectedBackend}
+            selectedFrontend={selectedFrontend}
+            onBackendChange={setSelectedBackend}
+            onFrontendChange={setSelectedFrontend}
+            onLaunch={handleLaunch}
+            onStop={handleStop}
+            onDownload={handleDownload}
+            isRunning={instance.status === 'running'}
+            instanceId={instance.instanceId}
+            sessionId={instance.sessionId}
+            frameworksError={frameworksError}
+            isLoadingFrameworks={isLoadingFrameworks}
+          />
+        </ErrorBoundary>
       ) : activePage === 'problem-resolver' ? (
-        <div className="container mx-auto px-4 py-8">
+        <ErrorBoundary>
+          <div className="container mx-auto px-4 py-8">
           <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Application Path
@@ -249,7 +326,9 @@ const App: React.FC = () => {
             }}
           />
         </div>
+        </ErrorBoundary>
       ) : (
+        <ErrorBoundary>
         <div className="container mx-auto px-4 py-8">
           {/* App Path Input */}
           <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
@@ -275,7 +354,7 @@ const App: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left Column - Controls & Status */}
+            {/* Left Column - Status & Tools */}
             <div className="space-y-8">
               <StatusIndicator
                 status={instance.status}
@@ -286,16 +365,6 @@ const App: React.FC = () => {
 
               {/* Permissions Stats */}
               <PermissionsStatsPanel />
-
-              <ControlsPanel
-                instanceId={instance.instanceId}
-                sessionId={instance.sessionId}
-                detectedCommands={detectedCommands}
-                onLaunch={handleLaunch}
-                onStop={handleStop}
-                onDownload={handleDownload}
-                isRunning={instance.status === 'running'}
-              />
 
               {/* Session Context Panel */}
               {instance.sessionToken && (
@@ -365,6 +434,7 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
+        </ErrorBoundary>
       )}
     </div>
   );

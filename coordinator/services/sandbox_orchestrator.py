@@ -129,20 +129,45 @@ class SandboxOrchestrator:
                 dockerfile_path = self._generate_dockerfile(app_path_obj, run_command)
             
             # Build image
-            image, build_logs = self.docker_client.images.build(
-                path=str(app_path_obj),
-                tag=image_name,
-                rm=True,
-                forcerm=True,
-            )
-            
-            # Capture build logs
             build_log_lines = []
-            for log in build_logs:
-                if "stream" in log:
-                    build_log_lines.append(log["stream"].strip())
-            
-            logger.info(f"Image built: {image_name}")
+            try:
+                image, build_logs = self.docker_client.images.build(
+                    path=str(app_path_obj),
+                    tag=image_name,
+                    rm=True,
+                    forcerm=True,
+                )
+                
+                # Capture build logs
+                for log in build_logs:
+                    if "stream" in log:
+                        log_line = log["stream"].strip()
+                        build_log_lines.append(log_line)
+                        logger.debug(f"Build: {log_line}")
+                    elif "error" in log:
+                        error_line = log["error"].strip()
+                        build_log_lines.append(f"ERROR: {error_line}")
+                        logger.error(f"Build error: {error_line}")
+                
+                logger.info(f"Image built: {image_name}")
+                
+            except DockerException as build_error:
+                # Capture error details
+                error_msg = str(build_error)
+                logger.error(f"Docker build failed: {error_msg}")
+                
+                # Log the last 20 lines of build output for debugging
+                if build_log_lines:
+                    logger.error("Last build logs:")
+                    for line in build_log_lines[-20:]:
+                        logger.error(f"  {line}")
+                
+                # Create detailed error message
+                detailed_error = f"Docker build failed: {error_msg}"
+                if build_log_lines:
+                    detailed_error += f"\n\nLast build output:\n" + "\n".join(build_log_lines[-10:])
+                
+                raise RuntimeError(detailed_error)
             
             # Start container
             container = self.docker_client.containers.run(
@@ -215,6 +240,11 @@ class SandboxOrchestrator:
                 "run_command": run_command,
             }
             
+        except RuntimeError as e:
+            # Already formatted error from build failure
+            logger.error(f"Failed to launch instance: {e}")
+            await self._cleanup_instance(instance_id)
+            raise
         except DockerException as e:
             logger.error(f"Failed to launch instance: {e}")
             # Cleanup on failure

@@ -3,12 +3,13 @@ Main entry point for the Autonomous App-Building Platform Coordinator
 """
 import os
 import asyncio
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from rich.console import Console
+import json
 
 from workflows.app_builder import AppBuilderWorkflow
 from config.settings import Settings
@@ -220,6 +221,47 @@ async def delete_build(build_id: str):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/build/{build_id}")
+async def build_websocket(websocket: WebSocket, build_id: str):
+    """Stream build progress in real-time"""
+    await websocket.accept()
+    try:
+        while True:
+            status = await workflow.get_build_status(build_id)
+            if status:
+                await websocket.send_json(status)
+            
+            if status and status.get("status") in ["success", "failed"]:
+                break
+            
+            await asyncio.sleep(2)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.get("/api/metrics/dashboard")
+async def get_metrics_dashboard():
+    """Get comprehensive metrics for monitoring"""
+    try:
+        from services.metrics_collector import get_metrics_collector
+        metrics = get_metrics_collector()
+        
+        return {
+            "builds": {
+                "total": metrics.get_counter("builds.total"),
+                "successful": metrics.get_counter("builds.successful"),
+                "failed": metrics.get_counter("builds.failed"),
+            },
+            "agents": {
+                "coordinator": {"avg_time": metrics.get_avg("agent.coordinator.duration")},
+                "backend": {"avg_time": metrics.get_avg("agent.backend.duration")},
+                "frontend": {"avg_time": metrics.get_avg("agent.frontend.duration")}
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # Serve UI
