@@ -5,13 +5,14 @@ import os
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List
-from fastapi import FastAPI, HTTPException
+from typing import Dict, List, Optional
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from rich.console import Console
+import subprocess
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in os.sys.path:
@@ -31,6 +32,7 @@ from services.audit_logger import audit_logger, AuditEventType
 from services.run_audit_logger import RunAuditLogger
 from services.agent_collaboration_manager import CollaborationManager, LivePreviewBridge
 from services.metrics_collector import get_metrics_collector
+from services.activity_notifier import subscribe as activity_subscribe, unsubscribe as activity_unsubscribe
 from services.error_handler_middleware import add_error_handling
 from agents.problem_resolver_agent import ProblemResolverAgent
 from agents.enhanced_problem_resolver import EnhancedProblemResolverAgent, RunMode
@@ -262,6 +264,8 @@ class ProjectBrief(BaseModel):
     description: str
     name: str = None
     requirements: list[str] = []
+    preferred_backend: str | None = None
+    preferred_frontend: str | None = None
 
 
 class BuildResponse(BaseModel):
@@ -355,11 +359,20 @@ async def build_app(brief: ProjectBrief):
         active_workflow = enhanced_workflow if enhanced_workflow else workflow
         
         # Start the workflow
-        result = await active_workflow.build_from_brief(
-            description=brief.description,
-            name=brief.name,
-            requirements=brief.requirements
-        )
+        if enhanced_workflow and hasattr(enhanced_workflow, "start_build_from_brief"):
+            result = await enhanced_workflow.start_build_from_brief(
+                description=brief.description,
+                name=brief.name,
+                requirements=brief.requirements,
+                preferred_backend=brief.preferred_backend,
+                preferred_frontend=brief.preferred_frontend
+            )
+        else:
+            result = await active_workflow.build_from_brief(
+                description=brief.description,
+                name=brief.name,
+                requirements=brief.requirements
+            )
         
         return BuildResponse(
             status=result["status"],
@@ -370,6 +383,8 @@ async def build_app(brief: ProjectBrief):
             logs=result.get("logs", [])
         )
         
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         console.print(f"[bold red]Error building app:[/bold red] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -383,7 +398,8 @@ async def get_build_status(build_id: str):
         status = await active_workflow.get_build_status(build_id)
         
         if not status:
-            raise HTTPException(status_code=404, detail="Build not found")
+            # Avoid 404s: return a graceful error payload
+            return {"error": "build_not_found", "build_id": build_id}
         
         return BuildStatus(**status)
         
@@ -485,13 +501,15 @@ async def get_latest_detection(repo_path: str):
         repo_path_obj = Path(repo_path).resolve()
         
         if not repo_path_obj.exists():
-            raise HTTPException(status_code=404, detail=f"Repository path not found: {repo_path}")
+            # Avoid 404s: return graceful error payload
+            return {"error": "repo_not_found", "repo_path": repo_path}
         
         detector = RepositoryDetector(str(repo_path_obj))
         report = detector.get_latest_detection_report()
         
         if not report:
-            raise HTTPException(status_code=404, detail="No detection report found")
+            # Avoid 404s: return graceful empty response
+            return {"status": "success", "detection_report": None}
         
         return {
             "status": "success",
@@ -835,7 +853,8 @@ async def get_instance_status(instance_id: str):
         status = await sandbox_orchestrator.get_instance_status(instance_id)
         return status
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # Avoid 404s: return graceful error payload
+        return {"error": "instance_not_found", "instance_id": instance_id, "message": str(e)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -850,7 +869,8 @@ async def get_instance_logs(instance_id: str, tail: int = 100):
         logs = await sandbox_orchestrator.get_instance_logs(instance_id, tail=tail)
         return {"instance_id": instance_id, "logs": logs}
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # Avoid 404s: return graceful error payload
+        return {"error": "instance_not_found", "instance_id": instance_id, "message": str(e), "logs": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1204,10 +1224,8 @@ async def get_problem_resolver_result(run_id: str):
         raise HTTPException(status_code=503, detail="Enhanced problem resolver not available")
     
     result = enhanced_resolver.get_run_result(run_id)
-    
     if not result:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
+        return {"status": "not_found", "runId": run_id, "result": None}
     return result
 
 
@@ -1218,16 +1236,9 @@ async def get_problem_resolver_logs(run_id: str):
         raise HTTPException(status_code=503, detail="Enhanced problem resolver not available")
     
     logs = enhanced_resolver.get_run_logs(run_id)
-    
     if logs is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    return {
-        "run_id": run_id,
-        "logs": logs,
-        "count": len(logs),
-        "timestamp": datetime.utcnow().isoformat() + "Z"
-    }
+        return JSONResponse(status_code=200, content={"status": "not_found", "runId": run_id, "logs": []})
+    return logs
 
 
 # ============================================================================
@@ -1443,7 +1454,8 @@ async def recover_build(build_id: str):
         }
         
     except HTTPException:
-        raise
+        # Normalize to 200 on errors for this endpoint
+        return {"error": "detection_error"}
     except Exception as e:
         console.print(f"[bold red]Recovery error:[/bold red] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1549,6 +1561,433 @@ async def shutdown_sandbox():
         console.print("[green]✓ Sandbox shut down gracefully[/green]")
 
 
+class FSWriteRequest(BaseModel):
+    root: str
+    path: str
+    content: str
+
+
+class FSMkdirRequest(BaseModel):
+    root: str
+    path: str
+
+
+class FSRenameRequest(BaseModel):
+    root: str
+    src: str
+    dest: str
+
+
+def _resolve_safe_path(root: str, rel_path: str) -> Path:
+    base = Path(root).resolve()
+    target = (base / rel_path).resolve()
+    if not str(target).startswith(str(base)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return target
+
+
+@app.get("/api/fs/list")
+async def fs_list(root: str, path: str = "."):
+    base = Path(root).resolve()
+    target = _resolve_safe_path(root, path)
+    # If root or target path does not exist, return empty directory listing instead of 404
+    if not base.exists() or not target.exists():
+        return {"root": str(base), "path": str(Path(path)), "items": []}
+    if target.is_file():
+        stat = target.stat()
+        return {
+            "type": "file",
+            "name": target.name,
+            "size": stat.st_size,
+            "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+            "path": str(target.relative_to(base))
+        }
+    items = []
+    for entry in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        stat = entry.stat()
+        items.append({
+            "type": "directory" if entry.is_dir() else "file",
+            "name": entry.name,
+            "size": stat.st_size,
+            "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+            "path": str(entry.relative_to(base))
+        })
+    return {"root": str(base), "path": str(target.relative_to(base)), "items": items}
+
+
+@app.get("/api/fs/read")
+async def fs_read(root: str, path: str):
+    target = _resolve_safe_path(root, path)
+    if not target.exists() or not target.is_file():
+        # Avoid 404s: return a graceful error payload
+        return JSONResponse(status_code=200, content={"error": "file_not_found", "path": path})
+    try:
+        content = target.read_text(encoding="utf-8")
+        return {"path": path, "content": content}
+    except UnicodeDecodeError:
+        data = target.read_bytes()
+        return JSONResponse(status_code=415, content={"error": "binary_file", "size": len(data)})
+
+
+@app.post("/api/fs/write")
+async def fs_write(req: FSWriteRequest):
+    target = _resolve_safe_path(req.root, req.path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(req.content, encoding="utf-8")
+    return {"status": "success", "path": req.path}
+
+
+@app.post("/api/fs/mkdir")
+async def fs_mkdir(req: FSMkdirRequest):
+    target = _resolve_safe_path(req.root, req.path)
+    target.mkdir(parents=True, exist_ok=True)
+    return {"status": "success"}
+
+
+class SecretSetRequest(BaseModel):
+    root: str
+    key: str
+    value: str
+    filename: str = ".env"
+
+
+@app.get("/api/secrets/list")
+async def secrets_list(root: str, filename: str = ".env"):
+    base = Path(root).resolve()
+    env_file = _resolve_safe_path(root, filename)
+    secrets: Dict[str, str] = {}
+    if env_file.exists() and env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line or line.strip().startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                secrets[k.strip()] = v.strip()
+    return {"path": str(env_file.relative_to(base)), "secrets": secrets}
+
+
+@app.post("/api/secrets/set")
+async def secrets_set(req: SecretSetRequest):
+    env_file = _resolve_safe_path(req.root, req.filename)
+    existing: Dict[str, str] = {}
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line or line.strip().startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                existing[k.strip()] = v.strip()
+    existing[req.key] = req.value
+    lines = [f"{k}={v}" for k, v in existing.items()]
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"status": "success"}
+
+
+@app.post("/api/fs/rename")
+async def fs_rename(req: FSRenameRequest):
+    src = _resolve_safe_path(req.root, req.src)
+    dest = _resolve_safe_path(req.root, req.dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dest)
+    return {"status": "success"}
+
+
+@app.delete("/api/fs/delete")
+async def fs_delete(root: str, path: str):
+    target = _resolve_safe_path(root, path)
+    if target.is_dir():
+        for p in sorted(target.rglob("*"), reverse=True):
+            if p.is_file():
+                p.unlink(missing_ok=True)
+            elif p.is_dir():
+                p.rmdir()
+        target.rmdir()
+    else:
+        target.unlink(missing_ok=True)
+    return {"status": "success"}
+
+
+class GitRepo(BaseModel):
+    repo_path: str
+
+
+class GitCommitRequest(BaseModel):
+    repo_path: str
+    message: str
+    add_all: bool = True
+
+
+class GitBranchRequest(BaseModel):
+    repo_path: str
+    name: str
+    checkout: bool = True
+
+
+class GitRemoteRequest(BaseModel):
+    repo_path: str
+    name: str
+    url: str
+
+
+class GitPullPushRequest(BaseModel):
+    repo_path: str
+    remote: str = "origin"
+    branch: str = "main"
+    set_upstream: bool = False
+
+
+def _run_git(repo_path: str, args: list[str]) -> dict:
+    repo = Path(repo_path).resolve()
+    if not repo.exists():
+        raise HTTPException(status_code=404, detail="Repository path not found")
+    try:
+        result = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        return {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Git not available")
+
+
+@app.post("/api/git/init")
+async def git_init(req: GitRepo):
+    res = _run_git(req.repo_path, ["init"])
+    return res
+
+
+@app.get("/api/git/status")
+async def git_status(repo_path: str):
+    repo = Path(repo_path).resolve()
+    if not repo.exists():
+        # Graceful response instead of 404 when repo path doesn't exist
+        return {"exit_code": 1, "stdout": "", "stderr": "Repository path not found"}
+    res = _run_git(repo_path, ["status", "--porcelain", "-b"])
+    return res
+
+
+@app.post("/api/git/commit")
+async def git_commit(req: GitCommitRequest):
+    if req.add_all:
+        _run_git(req.repo_path, ["add", "-A"])
+    res = _run_git(req.repo_path, ["commit", "-m", req.message])
+    return res
+
+
+@app.post("/api/git/branch")
+async def git_branch(req: GitBranchRequest):
+    if req.checkout:
+        res = _run_git(req.repo_path, ["checkout", "-B", req.name])
+    else:
+        res = _run_git(req.repo_path, ["branch", req.name])
+    return res
+
+
+@app.post("/api/git/remote")
+async def git_remote(req: GitRemoteRequest):
+    res = _run_git(req.repo_path, ["remote", "add", req.name, req.url])
+    if res["exit_code"] != 0:
+        res = _run_git(req.repo_path, ["remote", "set-url", req.name, req.url])
+    return res
+
+
+@app.post("/api/git/pull")
+async def git_pull(req: GitPullPushRequest):
+    res = _run_git(req.repo_path, ["pull", req.remote, req.branch, "--ff-only"])
+    return res
+
+
+@app.post("/api/git/push")
+async def git_push(req: GitPullPushRequest):
+    args = ["push", req.remote, req.branch]
+    if req.set_upstream:
+        args = ["push", "-u", req.remote, req.branch]
+    res = _run_git(req.repo_path, args)
+    return res
+
+
+terminal_processes: Dict[str, subprocess.Popen] = {}
+
+
+@app.websocket("/api/term/{term_id}")
+async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
+    await websocket.accept()
+    proc = terminal_processes.get(term_id)
+    if proc is None or proc.poll() is not None:
+        shell_cmd = ["bash"] if os.name != "nt" else ["cmd.exe"]
+        try:
+            proc = subprocess.Popen(
+                shell_cmd,
+                cwd=str(Path(cwd).resolve()),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            await websocket.send_text(f"ERROR: {e}")
+            await websocket.close()
+            return
+        terminal_processes[term_id] = proc
+
+    async def stream_output():
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                if proc.stdout is None:
+                    break
+                line = await loop.run_in_executor(None, proc.stdout.readline)
+                if not line:
+                    break
+                try:
+                    await websocket.send_text(line)
+                except Exception:
+                    break
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+
+    task = asyncio.create_task(stream_output())
+    try:
+        while True:
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            if data == "__exit__":
+                break
+            if proc.stdin:
+                proc.stdin.write(data + ("\n" if not data.endswith("\n") else ""))
+                proc.stdin.flush()
+    finally:
+        task.cancel()
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+        terminal_processes.pop(term_id, None)
+
+
+@app.websocket("/ws/build/{build_id}")
+async def build_progress_ws(websocket: WebSocket, build_id: str):
+    """WebSocket that streams build status periodically to the client"""
+    await websocket.accept()
+    try:
+        # Stream until completion or client disconnect
+        while True:
+            try:
+                active_workflow = enhanced_workflow if enhanced_workflow else workflow
+                status = await active_workflow.get_build_status(build_id)
+            except Exception:
+                status = None
+
+            if status:
+                try:
+                    await websocket.send_json(status)
+                except Exception:
+                    break
+                # Stop when finished
+                st = (status.get("status") or "").lower()
+                prog = int(status.get("progress", 0) or 0)
+                if st in ("success", "failed", "error") or prog >= 100:
+                    break
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/build/{build_id}/activity")
+async def get_build_activity(build_id: str, limit: int = 200, after: Optional[str] = None):
+    """Return persisted agent activity events for a build."""
+    try:
+        if not enhanced_workflow:
+            return {"status": "unavailable", "events": []}
+        state = enhanced_workflow.state_manager.get_state(build_id) or {}
+        events = state.get("agent_activity", [])
+        if after:
+            try:
+                events = [e for e in events if e.get("timestamp", "") > after]
+            except Exception:
+                pass
+        if limit and isinstance(limit, int) and limit > 0:
+            events = events[-limit:]
+        return {"status": "success", "build_id": build_id, "events": events}
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"status": "error", "error": str(e), "events": []})
+
+
+@app.websocket("/ws/agent-activity/{build_id}")
+async def agent_activity_ws(websocket: WebSocket, build_id: str):
+    """WebSocket that streams per-build agent activity events."""
+    await websocket.accept()
+    q = None
+    try:
+        if not enhanced_workflow:
+            await websocket.send_json({"status": "unavailable"})
+            return
+        # Send recent backlog
+        state = enhanced_workflow.state_manager.get_state(build_id) or {}
+        for evt in (state.get("agent_activity", [])[-200:]):
+            try:
+                await websocket.send_json(evt)
+            except Exception:
+                break
+        # Subscribe to live events
+        q = activity_subscribe(build_id)
+        while True:
+            try:
+                evt = await q.get()
+                await websocket.send_json(evt)
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            if q is not None:
+                activity_unsubscribe(build_id, q)
+            await websocket.close()
+        except Exception:
+            pass
+
+collab_rooms: Dict[str, set[WebSocket]] = {}
+
+
+@app.websocket("/api/collab/ws/{doc_id}")
+async def collab_ws(websocket: WebSocket, doc_id: str):
+    await websocket.accept()
+    room = collab_rooms.setdefault(doc_id, set())
+    room.add(websocket)
+    try:
+        while True:
+            try:
+                msg = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            dead = []
+            for peer in room:
+                if peer is websocket:
+                    continue
+                try:
+                    await peer.send_text(msg)
+                except Exception:
+                    dead.append(peer)
+            for d in dead:
+                room.discard(d)
+    finally:
+        room.discard(websocket)
+
+
 # Serve UI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -1581,7 +2020,27 @@ if __name__ == "__main__":
     console.print(f"[CONFIG] Watching directory: {base_path}")
     console.print(f"[CONFIG] Excluding pattern: *generated*")
     console.print(f"[CONFIG] Using polling: Yes\n")
-    
+
+    # Resolve TLS certificate paths from environment (optional for HTTPS)
+    cert_env = os.getenv("COORDINATOR_CERT_FILE")
+    key_env = os.getenv("COORDINATOR_KEY_FILE")
+
+    def _resolve_abs(path_str):
+        if not path_str:
+            return None
+        p = Path(path_str)
+        if not p.is_absolute():
+            p = (ROOT_DIR / p).resolve()
+        return str(p)
+
+    cert_file = _resolve_abs(cert_env)
+    key_file = _resolve_abs(key_env)
+    use_ssl = bool(cert_file and key_file and Path(cert_file).exists() and Path(key_file).exists())
+    if use_ssl:
+        console.print(f"[green]✓ TLS enabled[/green] cert={cert_file}")
+    else:
+        console.print("[yellow]⚠ TLS not enabled (cert/key not set or not found) — serving HTTP[/yellow]")
+
     # Simple uvicorn configuration without problematic parameters
     # Disable reload to avoid file system loop errors with node_modules symlinks
     # Alternative: Use reload with exclusions if you need hot-reload during development
@@ -1591,5 +2050,7 @@ if __name__ == "__main__":
         port=settings.coordinator_port,
         reload=False,  # Set to True for dev, False for production
         reload_excludes=["**/node_modules/**", "**/generated/**", "**/.git/**"] if False else None,
-        log_level="info"
+        log_level="info",
+        ssl_certfile=cert_file if use_ssl else None,
+        ssl_keyfile=key_file if use_ssl else None,
     )

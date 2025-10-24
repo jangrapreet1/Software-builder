@@ -6,8 +6,8 @@
     "first_seen": "2025-10-16T19:57:00.887942Z",
     "last_seen": "2025-10-18T21:20:08.645388Z",
     "affected_builds": [
-      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0",
-      "abe5c65e-f36b-4b65-8799-083c216042a1"
+      "abe5c65e-f36b-4b65-8799-083c216042a1",
+      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0"
     ],
     "suggested_fixes": [
       "Created .env file from .env.example"
@@ -20,8 +20,8 @@
     "first_seen": "2025-10-16T19:57:00.889029Z",
     "last_seen": "2025-10-18T21:20:08.646448Z",
     "affected_builds": [
-      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0",
-      "abe5c65e-f36b-4b65-8799-083c216042a1"
+      "abe5c65e-f36b-4b65-8799-083c216042a1",
+      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0"
     ],
     "suggested_fixes": [
       "Added error handling to models.py",
@@ -36,11 +36,33 @@
     "first_seen": "2025-10-16T19:57:00.891748Z",
     "last_seen": "2025-10-18T21:20:08.647956Z",
     "affected_builds": [
-      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0",
-      "abe5c65e-f36b-4b65-8799-083c216042a1"
+      "abe5c65e-f36b-4b65-8799-083c216042a1",
+      "da2cb8b6-c81a-47b4-8b29-19157cdf66f0"
     ],
     "suggested_fixes": [
       "Added timeout to API calls in test_api.py"
     ]
+  },
+  "workflow_step_failure:step generate_frontend failed: N deadline exceeded": {
+    "category": "workflow_step_failure",
+    "pattern": "step generate_frontend failed: N deadline exceeded",
+    "occurrences": 2,
+    "first_seen": "2025-10-19T15:38:56.243370Z",
+    "last_seen": "2025-10-19T15:38:56.243370Z",
+    "affected_builds": [
+      "689dc94f-99a7-4e4a-bf5c-92316267a947"
+    ],
+    "suggested_fixes": []
+  },
+  "workflow_failure:N deadline exceeded": {
+    "category": "workflow_failure",
+    "pattern": "N deadline exceeded",
+    "occurrences": 2,
+    "first_seen": "2025-10-19T15:38:56.276226Z",
+    "last_seen": "2025-10-19T15:38:56.276226Z",
+    "affected_builds": [
+      "689dc94f-99a7-4e4a-bf5c-92316267a947"
+    ],
+    "suggested_fixes": []
   }
 }

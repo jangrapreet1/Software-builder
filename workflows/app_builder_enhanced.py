@@ -25,6 +25,7 @@ from services.enhanced_state_manager import EnhancedStateManager
 from services.build_validator import BuildValidator
 from services.error_feedback_system import ErrorFeedbackSystem
 from services.metrics_collector import get_metrics_collector
+from services.activity_notifier import publish as publish_activity
 
 
 class AppBuilderState(TypedDict):
@@ -83,9 +84,19 @@ class EnhancedAppBuilderWorkflow:
         self.settings = settings
         
         # Initialize services
-        base_dir = Path(settings.generated_apps_dir).resolve().parent
-        self.state_manager = EnhancedStateManager(base_dir)
-        self.error_feedback = ErrorFeedbackSystem(base_dir / ".sb_artifacts" / "error_feedback")
+        repo_root = Path(settings.generated_apps_dir).resolve().parent
+        # Prefer explicit override, then LocalAppData, finally repo-local
+        env_dir = os.getenv("SB_STATE_DIR")
+        if env_dir and env_dir.strip():
+            artifacts_dir = Path(env_dir)
+        else:
+            localapp = os.getenv("LOCALAPPDATA", "").strip()
+            if localapp:
+                artifacts_dir = Path(localapp) / "SoftwareBuilder" / ".sb_artifacts"
+            else:
+                artifacts_dir = repo_root / ".sb_artifacts"
+        self.state_manager = EnhancedStateManager(artifacts_dir)
+        self.error_feedback = ErrorFeedbackSystem(artifacts_dir / "error_feedback")
         self.metrics = get_metrics_collector()
         
         # Initialize LLM
@@ -103,7 +114,7 @@ class EnhancedAppBuilderWorkflow:
         self.problem_resolver = ProblemResolverAgent(self.llm, settings)
         self.tester_agent = TesterAgent(self.llm, settings)
         
-        print(f"[Enhanced Workflow] Initialized with state manager at {base_dir}")
+        print(f"[Enhanced Workflow] Initialized with state manager at {artifacts_dir}")
     
     async def build_from_brief(
         self,
@@ -222,6 +233,123 @@ class EnhancedAppBuilderWorkflow:
             # Update active builds gauge
             active = (self.metrics.get_gauge("builds.active") or 1) - 1
             self.metrics.set_gauge("builds.active", max(0, active))
+
+    async def start_build_from_brief(
+        self,
+        description: str,
+        name: str = None,
+        requirements: list[str] = None,
+        enable_auto_resolution: bool = True,
+        run_tests: bool = False,
+        preferred_backend: str | None = None,
+        preferred_frontend: str | None = None,
+    ) -> dict:
+        """Start build asynchronously and return immediately with build_id.
+        Saves initial state so progress can stream over WS while background task runs.
+        """
+        # Validate input
+        if not description or not description.strip():
+            raise ValueError("Project description cannot be empty")
+        if len(description.strip()) < 10:
+            raise ValueError("Project description is too short. Please provide more details.")
+
+        build_id = str(uuid.uuid4())
+        project_name = name or self._generate_project_name(description)
+
+        # Metrics start
+        self.metrics.increment_counter("builds.total")
+        self.metrics.set_gauge("builds.active", (self.metrics.get_gauge("builds.active") or 0) + 1)
+        build_start_time = time.time()
+
+        # Planning feedback and initial state
+        feedback = self.error_feedback.get_feedback_for_planning()
+        initial_state = self._create_initial_state(
+            build_id,
+            description,
+            project_name,
+            requirements or [],
+            preferred_backend,
+            preferred_frontend,
+        )
+        self.state_manager.save_state(build_id, initial_state)
+
+        # Fire background task
+        async def _runner():
+            await self._run_build(
+                build_id=build_id,
+                initial_state=initial_state,
+                enable_auto_resolution=enable_auto_resolution,
+                run_tests=run_tests,
+                feedback=feedback,
+                build_start_time=build_start_time,
+            )
+
+        asyncio.create_task(_runner())
+
+        return {
+            "status": "building",
+            "build_id": build_id,
+            "message": "Build started",
+            "source_path": "",
+            "app_url": "",
+            "logs": initial_state.get("logs", [])
+        }
+
+    async def _run_build(
+        self,
+        build_id: str,
+        initial_state: dict,
+        enable_auto_resolution: bool,
+        run_tests: bool,
+        feedback: dict,
+        build_start_time: float,
+    ) -> None:
+        """Internal helper to run the build in the background and persist status."""
+        try:
+            final_state = await self._execute_workflow(
+                build_id,
+                initial_state,
+                enable_auto_resolution,
+                run_tests,
+                feedback,
+            )
+
+            final_state["build_status"] = "success"
+            final_state["progress"] = 100
+            final_state["current_step"] = "Complete"
+            self.state_manager.save_state(build_id, final_state)
+
+            build_duration = time.time() - build_start_time
+            self.metrics.increment_counter("builds.successful")
+            self.metrics.record_duration("builds.duration", build_duration)
+        except Exception as e:
+            error_msg = f"Build failed: {str(e)}"
+            state = self.state_manager.get_state(build_id) or initial_state
+            state["build_status"] = "failed"
+            state["errors"].append(error_msg)
+            state["current_step"] = "Failed"
+            state["logs"].append({
+                "level": "error",
+                "message": error_msg,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            })
+            self.state_manager.save_state(build_id, state)
+
+            build_duration = time.time() - build_start_time
+            self.metrics.increment_counter("builds.failed")
+            self.metrics.record_duration("builds.duration", build_duration)
+
+            self.error_feedback.record_error(
+                build_id=build_id,
+                error_category="workflow_failure",
+                error_message=str(e),
+                context={"stage": state.get("current_step", "unknown")},
+                resolution_attempted=False,
+                resolution_successful=False,
+            )
+        finally:
+            active = (self.metrics.get_gauge("builds.active") or 1) - 1
+            self.metrics.set_gauge("builds.active", max(0, active))
     
     async def _execute_workflow(
         self,
@@ -301,6 +429,7 @@ class EnhancedAppBuilderWorkflow:
         """Execute step with state checkpointing"""
         state["current_step"] = step_name
         self._log(state, "info", f"Starting step: {step_name}")
+        self._emit_activity(build_id, "workflow", step_name, f"start:{step_name}", "info", {})
         
         # Save state before step
         self.state_manager.save_state(build_id, state)
@@ -318,6 +447,7 @@ class EnhancedAppBuilderWorkflow:
             step_duration = time.time() - step_start
             self.metrics.record_duration(f"workflow.step.{step_name}", step_duration)
             self._log(state, "success", f"Completed step: {step_name} ({step_duration:.2f}s)")
+            self._emit_activity(build_id, "workflow", step_name, f"complete:{step_name}", "success", {"duration": round(step_duration, 2)})
             
         except Exception as e:
             # Record failure
@@ -327,6 +457,7 @@ class EnhancedAppBuilderWorkflow:
             error_msg = f"Step {step_name} failed: {str(e)}"
             self._log(state, "error", error_msg)
             state["errors"].append(error_msg)
+            self._emit_activity(build_id, "workflow", step_name, f"error:{step_name}", "error", {"error": str(e)})
             
             # Record in error feedback
             self.error_feedback.record_error(
@@ -375,6 +506,19 @@ class EnhancedAppBuilderWorkflow:
             state["entities"],
             state["user_flows"]
         )
+        # Thread user preferences into specs if provided
+        pref_be = (state.get("preferred_backend") or "").strip()
+        pref_fe = (state.get("preferred_frontend") or "").strip()
+        if pref_be:
+            try:
+                specs["preferred_backend"] = pref_be
+            except Exception:
+                pass
+        if pref_fe:
+            try:
+                specs["preferred_frontend"] = pref_fe
+            except Exception:
+                pass
         
         # Add preventive spec additions
         preventive_additions = self.error_feedback.generate_preventive_spec_additions()
@@ -556,7 +700,9 @@ class EnhancedAppBuilderWorkflow:
         build_id: str,
         brief: str,
         project_name: str,
-        requirements: list[str]
+        requirements: list[str],
+        preferred_backend: str | None = None,
+        preferred_frontend: str | None = None,
     ) -> dict:
         """Create initial workflow state"""
         return {
@@ -585,7 +731,10 @@ class EnhancedAppBuilderWorkflow:
             "errors": [],
             "warnings": [],
             "app_url": "",
-            "source_path": ""
+            "source_path": "",
+            "agent_activity": [],
+            "preferred_backend": preferred_backend or "",
+            "preferred_frontend": preferred_frontend or ""
         }
     
     def _generate_project_name(self, description: str) -> str:
@@ -604,6 +753,26 @@ class EnhancedAppBuilderWorkflow:
             "message": message,
             "timestamp": datetime.utcnow().isoformat() + "Z"
         })
+
+    def _emit_activity(self, build_id: str, agent: str, stage: str, message: str, level: str = "info", metadata: dict | None = None):
+        evt = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "agent": agent,
+            "stage": stage,
+            "message": message,
+            "level": level,
+            "metadata": metadata or {}
+        }
+        state = self.state_manager.get_state(build_id) or {}
+        if isinstance(state.get("agent_activity"), list):
+            state["agent_activity"].append(evt)
+        else:
+            state["agent_activity"] = [evt]
+        self.state_manager.save_state(build_id, state)
+        try:
+            publish_activity(build_id, evt)
+        except Exception:
+            pass
     
     async def get_build_status(self, build_id: str) -> Optional[dict]:
         """Get build status from persistent state"""

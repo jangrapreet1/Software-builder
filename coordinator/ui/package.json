@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "@monaco-editor/react": "^4.6.0",
+    "monaco-editor": "^0.52.0"
   },
   "devDependencies": {
     "@rollup/rollup-win32-x64-msvc": "^4.52.4",

@@ -80,3 +80,7 @@ htmlcov/
 *.tar.gz
 *.zip
 
+
+
+
+certs/

@@ -6,14 +6,22 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'https://localhost:5443',
         changeOrigin: true,
-        secure: false
+        secure: false,
+        ws: true
+      },
+      '/ws': {
+        target: 'https://localhost:5443',
+        changeOrigin: true,
+        secure: false,
+        ws: true
       },
       '/health': {
-        target: 'http://localhost:5000',
+        target: 'https://localhost:5443',
         changeOrigin: true,
-        secure: false
+        secure: false,
+        ws: true
       }
     }
   }

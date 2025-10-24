@@ -35,7 +35,17 @@ class Settings(BaseSettings):
     
     # Docker Configuration
     docker_network: str = "appbuilder-network"
-    
+    sandbox_read_only_rootfs: bool = True
+    sandbox_default_deny_egress: bool = True
+
+    # Object Storage (S3/MinIO)
+    object_store_endpoint: str = "http://localhost:9000"
+    object_store_region: str | None = None
+    object_store_access_key: str | None = None
+    object_store_secret_key: str | None = None
+    object_store_bucket: str = "appbuilder"
+    object_store_use_path_style: bool = True
+
     class Config:
         env_file = ".env"
         case_sensitive = False

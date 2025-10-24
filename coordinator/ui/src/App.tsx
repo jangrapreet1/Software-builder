@@ -2,16 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { LivePreview } from './components/LivePreview';
 import { StatusIndicator } from './components/StatusIndicator';
 import { LogsPanel } from './components/LogsPanel';
-import { ProblemResolverPanel } from './components/ProblemResolverPanel';
 import { EnhancedProblemResolverPanel } from './components/EnhancedProblemResolverPanel';
-import { TestingPanel } from './components/TestingPanel';
 import { ProjectExplorer } from './components/ProjectExplorer';
 import { NotificationSystem, useNotifications } from './components/NotificationSystem';
 import { SessionContextPanel } from './components/SessionContextPanel';
+import { EditorPanel } from './components/EditorPanel';
 import { PermissionsStatsPanel } from './components/PermissionsStatsPanel';
-import { FrameworkOption } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LoadingSpinner } from './components/LoadingSpinner';
 import { apiClient } from './utils/apiClient';
 
 interface InstanceState {
@@ -27,23 +24,19 @@ interface InstanceState {
   expiresAt?: string;
 }
 
-type ActivePage = 'live-preview' | 'project-explorer' | 'problem-resolver';
+type ActivePage = 'live-preview' | 'project-explorer' | 'problem-resolver' | 'editor';
 
 const App: React.FC = () => {
   const [instance, setInstance] = useState<InstanceState>({
     status: 'idle',
     progress: 0
   });
-  const [detectedCommands, setDetectedCommands] = useState<{buildCmd?: string[]; runCmd?: string[]}>({});
   const [appPath, setAppPath] = useState('./generated/my-app');
   const [activePage, setActivePage] = useState<ActivePage>('live-preview');
-  const [backendOptions, setBackendOptions] = useState<FrameworkOption[]>([]);
-  const [frontendOptions, setFrontendOptions] = useState<FrameworkOption[]>([]);
-  const [selectedBackend, setSelectedBackend] = useState<string>('');
-  const [selectedFrontend, setSelectedFrontend] = useState<string>('');
-  const [frameworksError, setFrameworksError] = useState<string | null>(null);
-  const [isLoadingFrameworks, setIsLoadingFrameworks] = useState(true);
   const { notifications, addNotification, dismissNotification } = useNotifications();
+  const [resolverRunId, setResolverRunId] = useState<string | null>(null);
+  const [resolverRunning, setResolverRunning] = useState(false);
+  const [resolverStatus, setResolverStatus] = useState<string>('idle');
 
   // Set up API client notification handler
   useEffect(() => {
@@ -72,45 +65,7 @@ const App: React.FC = () => {
     }
   }, [instance.instanceId, instance.status]);
 
-  useEffect(() => {
-    const fetchFrameworks = async () => {
-      try {
-        setIsLoadingFrameworks(true);
-        setFrameworksError(null);
-
-        const [backendResponse, frontendResponse] = await Promise.all([
-          fetch('/api/v2/frameworks?framework_type=backend'),
-          fetch('/api/v2/frameworks?framework_type=frontend')
-        ]);
-
-        if (!backendResponse.ok || !frontendResponse.ok) {
-          throw new Error('Failed to load framework options');
-        }
-
-        const backendData = await backendResponse.json();
-        const frontendData = await frontendResponse.json();
-
-        const backendList = Array.isArray(backendData.frameworks) ? backendData.frameworks : [];
-        const frontendList = Array.isArray(frontendData.frameworks) ? frontendData.frameworks : [];
-
-        setBackendOptions(backendList);
-        setFrontendOptions(frontendList);
-
-        if (!selectedBackend && backendList.length > 0) {
-          setSelectedBackend(backendList[0].id);
-        }
-        if (!selectedFrontend && frontendList.length > 0) {
-          setSelectedFrontend(frontendList[0].id);
-        }
-      } catch (error: any) {
-        setFrameworksError(error?.message ?? 'Unable to load framework options');
-      } finally {
-        setIsLoadingFrameworks(false);
-      }
-    };
-
-    fetchFrameworks();
-  }, []);
+  // Removed frameworks fetch and selection (controls removed from Project Explorer)
 
   const handleDetect = async () => {
     try {
@@ -125,11 +80,6 @@ const App: React.FC = () => {
       const data = await response.json();
       
       if (data.status === 'success') {
-        const report = data.detection_report;
-        setDetectedCommands({
-          buildCmd: report.build_commands?.confident || [],
-          runCmd: report.run_commands?.confident || []
-        });
         setInstance(prev => ({
           ...prev,
           status: 'detected',
@@ -143,8 +93,30 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLaunch = async (sessionId: string) => {
+  // Removed launch/stop/download controls from Project Explorer
+
+  const ensurePermission = async (sessionId: string) => {
     try {
+      const res = await fetch('/api/session/permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          actions: ['allow_run'],
+          commands: [],
+          duration: 3600
+        })
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleRun = async () => {
+    try {
+      const sessionId = instance.sessionId || `session-${Date.now()}`;
+      const permitted = await ensurePermission(sessionId);
       setInstance(prev => ({ ...prev, status: 'building', progress: 30, sessionId }));
 
       const response = await fetch('/api/app/launch', {
@@ -157,22 +129,18 @@ const App: React.FC = () => {
           memory_limit: '512m',
           timeout: 3600,
           session_id: sessionId,
-          environment: {
-            APPBUILDER_SELECTED_BACKEND: selectedBackend,
-            APPBUILDER_SELECTED_FRONTEND: selectedFrontend
-          }
+          environment: {}
         })
       });
 
-      if (response.status === 403) {
-        const data = await response.json();
-        alert(data.message);
+      if (response.status === 403 && !permitted) {
+        const data = await response.json().catch(()=>({message:'Permission denied'}));
+        addNotification({ type: 'warning', title: 'Permission Required', message: data.message || 'Grant permission to run', duration: 4000 });
         setInstance(prev => ({ ...prev, status: 'detected' }));
         return;
       }
 
       const data = await response.json();
-      
       if (data.status === 'success') {
         setInstance({
           instanceId: data.instance_id,
@@ -185,45 +153,110 @@ const App: React.FC = () => {
           logsUrl: data.logs_url,
           expiresAt: data.expires_at
         });
+        addNotification({ type: 'success', title: 'App Running', message: 'Sandbox preview started', duration: 3000 });
+      } else {
+        throw new Error(data.message || 'Launch failed');
       }
-    } catch (error) {
-      console.error('Launch error:', error);
-      setInstance(prev => ({ ...prev, status: 'error' }));
+    } catch (error: any) {
+      addNotification({ type: 'error', title: 'Run Failed', message: String(error?.message || error), duration: 4000 });
+      await startResolverAndRerun();
     }
   };
 
-  const handleStop = async (instanceId: string) => {
+  const handleStop = async () => {
     try {
+      if (!instance.instanceId) return;
       await fetch('/api/app/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instance_id: instanceId, force: true })
+        body: JSON.stringify({ instance_id: instance.instanceId, force: true })
       });
-
-      setInstance({
-        status: 'stopped',
-        progress: 0
-      });
-    } catch (error) {
-      console.error('Stop error:', error);
+      setInstance({ status: 'stopped', progress: 0 });
+      addNotification({ type: 'info', title: 'Stopped', message: 'Sandbox instance stopped', duration: 2500 });
+    } catch (e) {
+      addNotification({ type: 'error', title: 'Stop Failed', message: 'Could not stop instance', duration: 3000 });
     }
   };
 
-  const handleDownload = async () => {
+  const handleDeploy = async () => {
     try {
-      window.open(`/api/app/download?app_path=${encodeURIComponent(appPath)}`, '_blank');
-    } catch (error) {
-      console.error('Download error:', error);
+      const name = appPath.split(/[\\\/]/).filter(Boolean).slice(-1)[0] || 'app';
+      const res = await fetch('/api/v2/deployment/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_path: appPath, platform: 'docker', project_name: name })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        addNotification({ type: 'success', title: 'Deploy Configured', message: 'Generated deployment config (docker)', duration: 4000 });
+      } else {
+        throw new Error(data?.detail || 'Deploy configure failed');
+      }
+    } catch (e: any) {
+      addNotification({ type: 'error', title: 'Deploy Failed', message: e?.message || 'Failed to generate deployment config', duration: 4000 });
     }
   };
 
-  const handleResolve = () => {
-    setInstance(prev => ({ ...prev, status: 'detected' }));
+  const startResolverAndRerun = async () => {
+    try {
+      setResolverRunning(true);
+      setResolverStatus('starting');
+      const sessionId = instance.sessionId || `session-${Date.now()}`;
+      const res = await fetch('/api/agent/problem-resolver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          app_path: appPath,
+          commands: { build: [], test: [] },
+          run_mode: 'attempt-fix'
+        })
+      });
+      const data = await res.json();
+      if (data.status === 'success' && data.runId) {
+        setResolverRunId(data.runId);
+        setResolverStatus('running');
+        addNotification({ type: 'info', title: 'Agents Working', message: 'Problem resolver is fixing issues...', duration: 4000 });
+      } else {
+        throw new Error('Could not start resolver');
+      }
+    } catch (e: any) {
+      setResolverRunning(false);
+      setResolverStatus('error');
+      addNotification({ type: 'error', title: 'Resolver Failed', message: e?.message || 'Failed to start resolver', duration: 4000 });
+    }
   };
 
-  const handleTestComplete = () => {
-    // No-op placeholder. Future enhancements can store results here.
-  };
+  // Poll resolver status and auto re-run
+  useEffect(() => {
+    if (!resolverRunId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/agent/problem-resolver/${resolverRunId}/result`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.status === 'completed') {
+          setResolverStatus('completed');
+          setResolverRunning(false);
+          setResolverRunId(null);
+          await handleRun();
+        } else if (data.status === 'failed') {
+          setResolverStatus('failed');
+          setResolverRunning(false);
+          setResolverRunId(null);
+          addNotification({ type: 'warning', title: 'Agent Could Not Fix', message: 'Manual intervention may be required', duration: 5000 });
+        } else {
+          setResolverStatus('running');
+          setTimeout(poll, 5000);
+        }
+      } catch {
+        if (!cancelled) setTimeout(poll, 5000);
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [resolverRunId]);
 
   const previewActive = Boolean(instance.previewUrl && instance.instanceId);
   const previewStatusLabel = previewActive ? 'Live' : 'Not Running';
@@ -268,6 +301,14 @@ const App: React.FC = () => {
               >
                 Project Explorer
               </button>
+              <button
+                className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
+                  activePage === 'editor' ? 'bg-white text-blue-600 shadow' : 'text-white hover:bg-blue-400'
+                }`}
+                onClick={() => setActivePage('editor')}
+              >
+                Editor
+              </button>
             </div>
           </div>
         </div>
@@ -282,21 +323,11 @@ const App: React.FC = () => {
       {activePage === 'project-explorer' ? (
         <ErrorBoundary>
           <ProjectExplorer
-            detectedCommands={detectedCommands}
-            backendOptions={backendOptions}
-            frontendOptions={frontendOptions}
-            selectedBackend={selectedBackend}
-            selectedFrontend={selectedFrontend}
-            onBackendChange={setSelectedBackend}
-            onFrontendChange={setSelectedFrontend}
-            onLaunch={handleLaunch}
-            onStop={handleStop}
-            onDownload={handleDownload}
-            isRunning={instance.status === 'running'}
-            instanceId={instance.instanceId}
-            sessionId={instance.sessionId}
-            frameworksError={frameworksError}
-            isLoadingFrameworks={isLoadingFrameworks}
+            frameworksError={null}
+            onOpenEditor={(projectPath: string) => {
+              setAppPath(projectPath);
+              setActivePage('editor');
+            }}
           />
         </ErrorBoundary>
       ) : activePage === 'problem-resolver' ? (
@@ -326,6 +357,24 @@ const App: React.FC = () => {
             }}
           />
         </div>
+        </ErrorBoundary>
+      ) : activePage === 'editor' ? (
+        <ErrorBoundary>
+          <div className="container mx-auto px-4 py-8">
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Project Root
+              </label>
+              <input
+                type="text"
+                value={appPath}
+                onChange={(e) => setAppPath(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="./generated/my-app"
+              />
+            </div>
+            <EditorPanel root={appPath} />
+          </div>
         </ErrorBoundary>
       ) : (
         <ErrorBoundary>
@@ -373,17 +422,7 @@ const App: React.FC = () => {
                 />
               )}
 
-              {/* Phase 2: Problem Resolver Panel */}
-              <ProblemResolverPanel
-                appPath={appPath}
-                onResolve={handleResolve}
-              />
-
-              {/* Phase 2: Testing Panel */}
-              <TestingPanel
-                appPath={appPath}
-                onTestComplete={handleTestComplete}
-              />
+              {/* Problem Resolver & Testing removed from Live Preview tab */}
             </div>
 
             {/* Right Column - Preview & Logs */}
@@ -399,11 +438,16 @@ const App: React.FC = () => {
                       <p className="text-xs text-blue-700 opacity-80">Interact with the running application instance</p>
                     </div>
                   </div>
-                  <span className={`text-xs font-semibold tracking-wide px-3 py-1 rounded-full ${previewStatusClass}`}>
-                    {previewStatusLabel}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-semibold tracking-wide px-3 py-1 rounded-full ${previewStatusClass}`}>
+                      {previewStatusLabel}
+                    </span>
+                    <button onClick={handleRun} className="px-3 py-1 rounded bg-green-600 text-white text-sm hover:bg-green-700"><i className="fas fa-play mr-1"></i>Run</button>
+                    <button onClick={handleDeploy} className="px-3 py-1 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700"><i className="fas fa-cloud-upload-alt mr-1"></i>Deploy</button>
+                    <button onClick={handleStop} disabled={!instance.instanceId} className="px-3 py-1 rounded bg-red-600 text-white text-sm disabled:opacity-50 hover:bg-red-700"><i className="fas fa-stop mr-1"></i>Stop</button>
+                  </div>
                 </div>
-                <div className="p-6 bg-gradient-to-br from-slate-50 via-white to-slate-100 min-h-[360px] flex items-center justify-center">
+                <div className="relative p-6 bg-gradient-to-br from-slate-50 via-white to-slate-100 min-h-[360px] flex items-center justify-center">
                   {previewActive ? (
                     <div className="w-full">
                       <LivePreview
@@ -413,13 +457,30 @@ const App: React.FC = () => {
                       />
                     </div>
                   ) : (
-                    <div className="text-center text-gray-500 space-y-3">
-                      <i className="fas fa-tv text-4xl text-gray-400"></i>
-                      <div>
-                        <p className="text-sm font-medium">Live preview is not running yet.</p>
-                        <p className="text-xs">Launch the application to see it rendered here.</p>
+                    <div className="w-full h-[360px] flex items-center justify-center">
+                      <div className="text-center text-gray-600 space-y-3 opacity-90">
+                        <i className="fas fa-robot text-4xl text-gray-400"></i>
+                        <div className="text-sm">
+                          {resolverRunning ? (
+                            <>
+                              <div className="font-semibold">Agents are working...</div>
+                              <div className="text-xs">Status: {resolverStatus}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="font-medium">Application is not running.</div>
+                              <div className="text-xs">Click Run to start the sandbox. If issues occur, agents will attempt fixes automatically and re-run.</div>
+                            </>
+                          )}
+                        </div>
+                        {!resolverRunning && (
+                          <button onClick={handleRun} className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm"><i className="fas fa-play mr-1"></i>Run</button>
+                        )}
                       </div>
                     </div>
+                  )}
+                  {resolverRunning && (
+                    <div className="absolute inset-0 bg-white/60 backdrop-blur-sm pointer-events-none" />
                   )}
                 </div>
               </div>

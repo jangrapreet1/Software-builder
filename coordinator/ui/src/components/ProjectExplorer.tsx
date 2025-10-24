@@ -1,6 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ControlsPanel } from './ControlsPanel';
-import { FrameworkOption } from '../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type ProjectItem = {
   name: string;
@@ -19,29 +17,29 @@ type BuildResult = {
   source_path?: string;
 };
 
-type DetectedCommands = {
-  buildCmd?: string[];
-  runCmd?: string[];
+
+type BuildProgress = {
+  build_id: string;
+  status: string;
+  progress: number;
+  current_step: string;
+  logs: Array<{
+    level: string;
+    message: string;
+    timestamp: string;
+  }>;
+};
+
+type BuildSummary = {
+  build_id: string;
+  status: string;
+  last_updated?: string;
+  version?: number;
 };
 
 interface ProjectExplorerProps {
-  detectedCommands?: DetectedCommands;
-  backendOptions: FrameworkOption[];
-  frontendOptions: FrameworkOption[];
-  selectedBackend?: string;
-  selectedFrontend?: string;
-  onBackendChange: (frameworkId: string) => void;
-  onFrontendChange: (frameworkId: string) => void;
-  onLaunch: (sessionId: string) => void;
-  onStop: (instanceId: string) => void;
-  onDownload: () => void;
-  isRunning?: boolean;
-  instanceId?: string;
-  sessionId?: string;
+  onOpenEditor: (projectPath: string) => void;
   frameworksError?: string | null;
-  isLoadingFrameworks?: boolean;
-  onRequestTests?: () => void;
-  onOpenPR?: () => void;
 }
 
 const formatTimestamp = (value: string) => {
@@ -54,23 +52,8 @@ const formatTimestamp = (value: string) => {
 };
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
-  detectedCommands,
-  backendOptions,
-  frontendOptions,
-  selectedBackend,
-  selectedFrontend,
-  onBackendChange,
-  onFrontendChange,
-  onLaunch,
-  onStop,
-  onDownload,
-  isRunning = false,
-  instanceId,
-  sessionId,
   frameworksError,
-  isLoadingFrameworks = false,
-  onRequestTests,
-  onOpenPR,
+  onOpenEditor,
 }) => {
   const [description, setDescription] = useState('');
   const [projectName, setProjectName] = useState('');
@@ -79,9 +62,29 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
   const [buildResult, setBuildResult] = useState<BuildResult | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
 
+  const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null);
+  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const lastConnectAtRef = useRef<number>(0);
+
+  const getProgressColor = (progress: number) => {
+    if (progress < 30) return 'bg-blue-500';
+    if (progress < 70) return 'bg-yellow-500';
+    return 'bg-green-500';
+  };
+
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [inProgressBuilds, setInProgressBuilds] = useState<BuildSummary[]>([]);
+  const [inProgressError, setInProgressError] = useState<string | null>(null);
+  const [loadingInProgress, setLoadingInProgress] = useState(false);
+  const [backendOptions, setBackendOptions] = useState<Array<{ id: string; name: string; language: string; description?: string }>>([]);
+  const [frontendOptions, setFrontendOptions] = useState<Array<{ id: string; name: string; language: string; description?: string }>>([]);
+  const [selectedBackend, setSelectedBackend] = useState<string>('');
+  const [selectedFrontend, setSelectedFrontend] = useState<string>('');
+  const [stackError, setStackError] = useState<string | null>(null);
+  const [loadingStack, setLoadingStack] = useState(false);
 
   const parsedRequirements = useMemo(() => {
     if (!requirementsText.trim()) {
@@ -118,6 +121,149 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
     fetchProjects();
   }, [fetchProjects]);
 
+  // Fetch available frameworks
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoadingStack(true);
+        setStackError(null);
+        const [beRes, feRes] = await Promise.all([
+          fetch('/api/v2/frameworks?framework_type=backend'),
+          fetch('/api/v2/frameworks?framework_type=frontend')
+        ]);
+        if (!beRes.ok || !feRes.ok) throw new Error('Failed to load framework options');
+        const beData = await beRes.json();
+        const feData = await feRes.json();
+        const beList = Array.isArray(beData.frameworks) ? beData.frameworks : [];
+        const feList = Array.isArray(feData.frameworks) ? feData.frameworks : [];
+        if (!cancelled) {
+          setBackendOptions(beList);
+          setFrontendOptions(feList);
+          const savedBE = localStorage.getItem('sb_pref_backend') || '';
+          const savedFE = localStorage.getItem('sb_pref_frontend') || '';
+          setSelectedBackend(savedBE || (beList[0]?.id || ''));
+          setSelectedFrontend(savedFE || (feList[0]?.id || ''));
+        }
+      } catch (e: any) {
+        if (!cancelled) setStackError(e?.message ?? 'Unable to load tech stack options');
+      } finally {
+        if (!cancelled) setLoadingStack(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    try { if (selectedBackend) localStorage.setItem('sb_pref_backend', selectedBackend); } catch {}
+  }, [selectedBackend]);
+  useEffect(() => {
+    try { if (selectedFrontend) localStorage.setItem('sb_pref_frontend', selectedFrontend); } catch {}
+  }, [selectedFrontend]);
+
+  const refreshInProgress = useCallback(async () => {
+    setLoadingInProgress(true);
+    setInProgressError(null);
+    try {
+      const res = await fetch('/api/builds');
+      if (!res.ok) throw new Error(`Request failed with status ${res.status}`);
+      const data = await res.json();
+      const builds: BuildSummary[] = Array.isArray(data?.builds) ? data.builds : [];
+      const active = builds.filter(b => {
+        const st = (b.status || '').toLowerCase();
+        return st !== 'success' && st !== 'failed' && st !== 'error';
+      });
+      setInProgressBuilds(active);
+    } catch (e: any) {
+      setInProgressError(e?.message ?? 'Failed to load in-progress builds');
+    } finally {
+      setLoadingInProgress(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const savedId = typeof window !== 'undefined' ? localStorage.getItem('sb_active_build_id') : null;
+    if (savedId && !buildProgress) {
+      (async () => {
+        try {
+          const res = await fetch(`/api/build/${savedId}/status`);
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          const data = await res.json();
+          if (!data || data.error) {
+            localStorage.removeItem('sb_active_build_id');
+            return;
+          }
+          setBuildProgress({
+            build_id: savedId,
+            status: data.status || 'building',
+            progress: data.progress ?? 0,
+            current_step: data.current_step || '',
+            logs: Array.isArray(data.logs) ? data.logs : []
+          });
+        } catch {
+          localStorage.removeItem('sb_active_build_id');
+        }
+      })();
+    }
+    refreshInProgress();
+  }, []);
+
+  const isFinished = useMemo(() => {
+    const st = (buildProgress?.status || '').toLowerCase();
+    const prog = buildProgress?.progress ?? 0;
+    return st === 'success' || st === 'failed' || st === 'error' || prog >= 100;
+  }, [buildProgress?.status, buildProgress?.progress]);
+
+  useEffect(() => {
+    if (buildProgress?.build_id && !wsConnection && !isFinished) {
+      const now = Date.now();
+      if (now - lastConnectAtRef.current < 800) {
+        return; // throttle reconnects
+      }
+      lastConnectAtRef.current = now;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws/build/${buildProgress.build_id}`);
+
+      ws.onopen = () => {
+        setWsConnection(ws);
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        setBuildProgress(data);
+
+        const st = (data?.status ?? '').toLowerCase();
+        if (st === 'success' || st === 'failed' || st === 'error' || (data?.progress ?? 0) >= 100) {
+          try { ws.close(); } catch {}
+          setWsConnection(null);
+          try { localStorage.removeItem('sb_active_build_id'); } catch {}
+          refreshInProgress();
+        }
+      };
+
+      ws.onerror = () => {
+        setWsConnection(null);
+      };
+
+      ws.onclose = () => {
+        setWsConnection(null);
+      };
+
+      return () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      };
+    }
+  }, [buildProgress?.build_id, isFinished]);
+
+  useEffect(() => {
+    const width = Math.max(0, Math.min(100, buildProgress?.progress ?? 0));
+    if (progressBarRef.current) {
+      progressBarRef.current.style.width = `${width}%`;
+    }
+  }, [buildProgress?.progress]);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -135,6 +281,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
         description: description.trim(),
         name: projectName.trim() || undefined,
         requirements: parsedRequirements,
+        preferred_backend: selectedBackend || undefined,
+        preferred_frontend: selectedFrontend || undefined,
       };
 
       const response = await fetch('/api/build', {
@@ -151,11 +299,41 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
 
       const result = (await response.json()) as BuildResult;
       setBuildResult(result);
+      if (result.build_id) {
+        setBuildProgress({
+          build_id: result.build_id,
+          status: 'building',
+          progress: 10,
+          current_step: 'Starting build...',
+          logs: []
+        });
+        try { localStorage.setItem('sb_active_build_id', result.build_id); } catch {}
+      }
       fetchProjects();
+      refreshInProgress();
     } catch (error: any) {
       setSubmissionError(error?.message ?? 'Failed to submit build request');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleResume = async (buildId: string) => {
+    try {
+      const res = await fetch(`/api/build/${buildId}/status`);
+      if (!res.ok) throw new Error(`Request failed with status ${res.status}`);
+      const data = await res.json();
+      if (!data || data.error) throw new Error('Build not found');
+      setBuildProgress({
+        build_id: buildId,
+        status: data.status || 'building',
+        progress: data.progress ?? 0,
+        current_step: data.current_step || '',
+        logs: Array.isArray(data.logs) ? data.logs : []
+      });
+      try { localStorage.setItem('sb_active_build_id', buildId); } catch {}
+    } catch (e) {
+      await refreshInProgress();
     }
   };
 
@@ -232,33 +410,111 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
           </div>
 
           <div className="space-y-4">
+            <div className="rounded-md border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-gray-800">Tech Stack</h3>
+                {loadingStack && (<span className="text-xs text-gray-500">Loading...</span>)}
+              </div>
+              {stackError && (
+                <div className="rounded bg-red-50 text-red-700 text-xs px-2 py-1 mb-2">{stackError}</div>
+              )}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Backend</label>
+                  <select
+                    value={selectedBackend}
+                    onChange={(e) => setSelectedBackend(e.target.value)}
+                    className="w-full px-2 py-2 border border-gray-300 rounded-md"
+                    title="Select backend framework"
+                  >
+                    {backendOptions.map((fw) => (
+                      <option key={fw.id} value={fw.id}>{fw.name} · {fw.language.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Frontend</label>
+                  <select
+                    value={selectedFrontend}
+                    onChange={(e) => setSelectedFrontend(e.target.value)}
+                    className="w-full px-2 py-2 border border-gray-300 rounded-md"
+                    title="Select frontend framework"
+                  >
+                    {frontendOptions.map((fw) => (
+                      <option key={fw.id} value={fw.id}>{fw.name} · {fw.language.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {inProgressError && (
+                <div className="rounded-md bg-yellow-50 px-4 py-3 text-sm text-yellow-800">{inProgressError}</div>
+              )}
+              {(!loadingInProgress && inProgressBuilds.length > 0) && (
+                <div className="rounded-md border border-gray-200 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-gray-800">In-Progress Builds</h3>
+                    <button onClick={refreshInProgress} className="text-sm text-blue-600 hover:text-blue-700">Refresh</button>
+                  </div>
+                  <div className="space-y-2">
+                    {inProgressBuilds.map((b) => (
+                      <div key={b.build_id} className="flex items-center justify-between text-sm">
+                        <div className="truncate mr-2">
+                          <span className="font-mono text-gray-700">{b.build_id}</span>
+                          <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">{b.status}</span>
+                        </div>
+                        <button onClick={() => handleResume(b.build_id)} className="text-blue-600 hover:text-blue-800">Resume</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             {frameworksError && (
               <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">
                 {frameworksError}
               </div>
             )}
-
-            <ControlsPanel
-              instanceId={instanceId}
-              sessionId={sessionId}
-              detectedCommands={detectedCommands}
-              backendOptions={backendOptions}
-              frontendOptions={frontendOptions}
-              selectedBackend={selectedBackend}
-              selectedFrontend={selectedFrontend}
-              onBackendChange={onBackendChange}
-              onFrontendChange={onFrontendChange}
-              onLaunch={onLaunch}
-              onStop={onStop}
-              onDownload={onDownload}
-              onRequestTests={onRequestTests}
-              onOpenPR={onOpenPR}
-              isRunning={isRunning}
-              isLoadingFrameworks={isLoadingFrameworks}
-            />
+            {/* Controls removed as requested */}
           </div>
         </div>
       </section>
+
+      {buildProgress && (
+        <section className="bg-white rounded-lg shadow-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-gray-900">Build Progress</h3>
+            <span className="text-sm text-gray-600">{buildProgress.progress}%</span>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">{buildProgress.current_step}</p>
+          <div className="mb-6">
+            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+              <div
+                ref={progressBarRef}
+                className={`h-full ${getProgressColor(buildProgress.progress)} transition-all duration-500`}
+              />
+            </div>
+          </div>
+          {Array.isArray(buildProgress.logs) && buildProgress.logs.length > 0 && (
+            <div className="bg-gray-900 rounded-lg p-4 max-h-56 overflow-y-auto">
+              {buildProgress.logs.slice(-10).map((log, idx) => (
+                <div key={idx} className="text-sm font-mono">
+                  <span className="text-gray-500 text-xs">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  <span className={`ml-2 ${
+                    log.level === 'error' ? 'text-red-400' :
+                    log.level === 'warning' ? 'text-yellow-400' :
+                    'text-green-400'
+                  }`}>
+                    [{(log.level || 'info').toUpperCase()}]
+                  </span>
+                  <span className="text-gray-300 ml-2">{log.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="bg-white rounded-lg shadow-lg p-6 space-y-6">
         <div className="flex items-center justify-between">
@@ -283,7 +539,12 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {projects.map((project) => (
-            <div key={project.path} className="border border-gray-200 rounded-lg p-5 space-y-3">
+            <div
+              key={project.path}
+              className="border border-gray-200 rounded-lg p-5 space-y-3 hover:shadow-md hover:border-blue-300 cursor-pointer transition"
+              onClick={() => onOpenEditor(project.path)}
+              title="Open in Editor"
+            >
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
                 <p className="text-sm text-gray-500 break-all">{project.path}</p>
@@ -293,12 +554,20 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
                 <p>Updated: {formatTimestamp(project.updated_at)}</p>
               </div>
               <div className="flex items-center space-x-2 text-sm">
-                <span className={`px-3 py-1 rounded-full ${project.has_backend ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                <span className={`${project.has_backend ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'} px-3 py-1 rounded-full`}>
                   Backend
                 </span>
-                <span className={`px-3 py-1 rounded-full ${project.has_frontend ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                <span className={`${project.has_frontend ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'} px-3 py-1 rounded-full`}>
                   Frontend
                 </span>
+              </div>
+              <div className="pt-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onOpenEditor(project.path); }}
+                  className="text-blue-600 hover:text-blue-800 text-sm"
+                >
+                  Open in Editor
+                </button>
               </div>
             </div>
           ))}
