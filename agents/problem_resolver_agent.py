@@ -13,6 +13,7 @@ import subprocess
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage, SystemMessage
+from services.retry_utils import call_llm_with_retry
 
 
 class ErrorCategory:
@@ -442,7 +443,7 @@ Code:
 
 Return ONLY the corrected code without any explanation."""
             
-            response = await self.llm.ainvoke([
+            response = await call_llm_with_retry(self.llm, [
                 SystemMessage(content="You are an expert code fixer. Fix syntax errors precisely."),
                 HumanMessage(content=prompt)
             ])
@@ -554,7 +555,7 @@ Code:
 
 Return ONLY the corrected code with try-except blocks around database operations."""
             
-            response = await self.llm.ainvoke([
+            response = await call_llm_with_retry(self.llm, [
                 SystemMessage(content="You are an expert in adding robust error handling to database code."),
                 HumanMessage(content=prompt)
             ])
@@ -645,7 +646,7 @@ Details: {issue.get('details', 'N/A')}
 
 Provide a concise fix suggestion."""
             
-            response = await self.llm.ainvoke([
+            response = await call_llm_with_retry(self.llm, [
                 SystemMessage(content="You are an expert problem solver for software issues."),
                 HumanMessage(content=prompt)
             ])

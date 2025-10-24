@@ -275,6 +275,29 @@ class ErrorFeedbackSystem:
             ],
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }
+
+    # Backwards-compatibility analytics expected by tests
+    def get_error_analytics(self) -> Dict:
+        """Return concise analytics with totals and category breakdown expected by tests."""
+        total_errors = sum(len(errs) for errs in self.build_errors.values())
+        by_category = self.get_category_statistics()
+        # Include a minimal, stable structure while also surfacing a richer snapshot
+        return {
+            "total_errors": total_errors,
+            "by_category": by_category,
+            "summary": {
+                "total_error_patterns": len(self.error_patterns),
+                "total_builds_tracked": len(self.build_errors),
+            },
+            "top_patterns": [
+                p.to_dict() for p in sorted(
+                    self.error_patterns.values(),
+                    key=lambda x: x.occurrences,
+                    reverse=True
+                )[:10]
+            ],
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
     
     def _normalize_error(self, error_message: str) -> str:
         """Normalize error message to identify patterns"""

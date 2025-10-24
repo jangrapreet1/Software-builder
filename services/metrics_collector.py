@@ -129,8 +129,24 @@ class MetricsCollector:
             }
     
     def get_timer_stats(self, name: str, labels: Optional[Dict] = None) -> Optional[Dict]:
-        """Get timer statistics"""
-        return self.get_histogram_stats(name, labels)
+        """Get timer statistics (count, min, max, mean, median, p50, p90, p95, p99)."""
+        with self._lock:
+            key = self._make_key(name, labels)
+            values = self._timers.get(key, [])
+            if not values:
+                return None
+            sorted_values = sorted(values)
+            return {
+                "count": len(values),
+                "min": min(values),
+                "max": max(values),
+                "mean": statistics.mean(values),
+                "median": statistics.median(values),
+                "p50": self._percentile(sorted_values, 50),
+                "p90": self._percentile(sorted_values, 90),
+                "p95": self._percentile(sorted_values, 95),
+                "p99": self._percentile(sorted_values, 99),
+            }
     
     def get_all_metrics(self) -> Dict:
         """Get all current metrics"""

@@ -79,6 +79,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
   const [inProgressBuilds, setInProgressBuilds] = useState<BuildSummary[]>([]);
   const [inProgressError, setInProgressError] = useState<string | null>(null);
   const [loadingInProgress, setLoadingInProgress] = useState(false);
+  const [inProgressLabels, setInProgressLabels] = useState<Record<string, string>>({});
   const [backendOptions, setBackendOptions] = useState<Array<{ id: string; name: string; language: string; description?: string }>>([]);
   const [frontendOptions, setFrontendOptions] = useState<Array<{ id: string; name: string; language: string; description?: string }>>([]);
   const [selectedBackend, setSelectedBackend] = useState<string>('');
@@ -264,6 +265,40 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
     }
   }, [buildProgress?.progress]);
 
+  // Load friendly labels (project name) for in-progress builds
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!inProgressBuilds.length) {
+        setInProgressLabels({});
+        return;
+      }
+      try {
+        const entries = await Promise.all(
+          inProgressBuilds.map(async (b) => {
+            try {
+              const res = await fetch(`/api/build/${b.build_id}/status`);
+              const data = await res.json();
+              const sp: string = data?.source_path || '';
+              const name = sp ? sp.split(/[\\\/]/).filter(Boolean).slice(-1)[0] : '';
+              return [b.build_id, name || b.build_id] as const;
+            } catch {
+              return [b.build_id, b.build_id] as const;
+            }
+          })
+        );
+        if (!cancelled) {
+          const map: Record<string, string> = {};
+          for (const [id, label] of entries) map[id] = label;
+          setInProgressLabels(map);
+        }
+      } catch {
+        if (!cancelled) setInProgressLabels({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [inProgressBuilds]);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -334,6 +369,22 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
       try { localStorage.setItem('sb_active_build_id', buildId); } catch {}
     } catch (e) {
       await refreshInProgress();
+    }
+  };
+
+  const handleStopBuild = async (buildId: string) => {
+    try {
+      const confirmed = window.confirm('Stop and remove this build?');
+      if (!confirmed) return;
+      const res = await fetch(`/api/build/${buildId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Failed to stop build (status ${res.status})`);
+      if (buildProgress?.build_id === buildId) {
+        setBuildProgress(null);
+        try { localStorage.removeItem('sb_active_build_id'); } catch {}
+      }
+      await refreshInProgress();
+    } catch (e) {
+      // no-op; UI will refresh list
     }
   };
 
@@ -461,10 +512,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
                     {inProgressBuilds.map((b) => (
                       <div key={b.build_id} className="flex items-center justify-between text-sm">
                         <div className="truncate mr-2">
-                          <span className="font-mono text-gray-700">{b.build_id}</span>
+                          <span className="text-gray-900 font-medium">{inProgressLabels[b.build_id] || b.build_id}</span>
+                          <span className="ml-2 font-mono text-gray-500">({b.build_id})</span>
                           <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">{b.status}</span>
                         </div>
-                        <button onClick={() => handleResume(b.build_id)} className="text-blue-600 hover:text-blue-800">Resume</button>
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => handleResume(b.build_id)} className="text-blue-600 hover:text-blue-800">Show Progress</button>
+                          <button onClick={() => handleStopBuild(b.build_id)} className="text-red-600 hover:text-red-700">Stop</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -484,7 +539,13 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
       {buildProgress && (
         <section className="bg-white rounded-lg shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-gray-900">Build Progress</h3>
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Build Progress</h3>
+              <div className="text-xs text-gray-600 mt-0.5">
+                {(inProgressLabels[buildProgress.build_id] || buildProgress.build_id)}
+                <span className="ml-1 text-gray-400">({buildProgress.build_id})</span>
+              </div>
+            </div>
             <span className="text-sm text-gray-600">{buildProgress.progress}%</span>
           </div>
           <p className="text-sm text-gray-600 mb-4">{buildProgress.current_step}</p>

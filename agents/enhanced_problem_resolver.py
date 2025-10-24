@@ -15,6 +15,7 @@ from enum import Enum
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage, SystemMessage
+from services.retry_utils import call_llm_with_retry
 
 
 class RunMode(str, Enum):
@@ -338,7 +339,7 @@ Error: {error_text[:300]}
 
 Provide only the fix suggestion, no explanation."""
             
-            response = await self.llm.ainvoke([
+            response = await call_llm_with_retry(self.llm, [
                 SystemMessage(content="You are an expert debugger. Provide concise, actionable fix suggestions."),
                 HumanMessage(content=prompt)
             ])
@@ -377,6 +378,15 @@ Provide only the fix suggestion, no explanation."""
             })
         
         return issues
+
+    def get_run_artifacts(self, run_id: str) -> Optional[List[Dict]]:
+        """Get artifacts for a resolver run"""
+        if run_id in self.active_runs:
+            return self.active_runs[run_id].artifacts
+        for run in self.run_history:
+            if run.run_id == run_id:
+                return run.artifacts
+        return None
     
     async def _attempt_repairs(self, run: ResolverRun, diagnosis: Dict) -> Dict:
         """Attempt to repair issues (only low-risk fixes)"""

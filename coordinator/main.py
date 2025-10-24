@@ -2,11 +2,13 @@
 Main entry point for the Autonomous App-Building Platform Coordinator
 """
 import os
+import sys
 import asyncio
 from pathlib import Path
 from datetime import datetime
+import time
 from typing import Dict, List, Optional
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -15,8 +17,19 @@ from rich.console import Console
 import subprocess
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-if str(ROOT_DIR) not in os.sys.path:
-    os.sys.path.insert(0, str(ROOT_DIR))
+# Ensure repo root is at the very front to avoid 'coordinator/services' shadowing top-level 'services'
+try:
+    root_str = str(ROOT_DIR)
+    if root_str in sys.path:
+        try:
+            sys.path.remove(root_str)
+        except ValueError:
+            pass
+    sys.path.insert(0, root_str)
+except Exception:
+    # Fallback to os.sys if needed
+    if str(ROOT_DIR) not in os.sys.path:
+        os.sys.path.insert(0, str(ROOT_DIR))
 
 # Initialize console for rich output
 console = Console()
@@ -96,6 +109,9 @@ build_registry.bootstrap_from_generated(GENERATED_DIR)
 run_audit_logger = RunAuditLogger(str(REPO_ROOT / ".sb_artifacts"))
 metrics_collector = get_metrics_collector()
 
+# Launch retry governance (per session_id)
+LAUNCH_RETRY_STATE: Dict[str, Dict] = {}
+
 # Initialize sandbox services
 try:
     sandbox_orchestrator = SandboxOrchestrator(
@@ -132,6 +148,65 @@ except Exception as e:
     tester_agent = None
     collaboration_manager = None
     live_preview_bridge = None
+
+# ================= Problem Resolver API =================
+class ProblemResolverStartRequest(BaseModel):
+    session_id: str
+    app_path: str
+    commands: Dict[str, List[str]] | None = None
+    run_mode: str | None = "diagnose-only"
+
+
+@app.post("/api/agent/problem-resolver")
+async def start_problem_resolver(req: ProblemResolverStartRequest):
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced resolver not available")
+    try:
+        mode = RunMode.ATTEMPT_FIX if (req.run_mode or "").lower() == RunMode.ATTEMPT_FIX.value else RunMode.DIAGNOSE_ONLY
+        run_id = await enhanced_resolver.start_resolver_run(
+            session_id=req.session_id,
+            app_path=req.app_path,
+            commands=req.commands or {"build": [], "run": [], "test": []},
+            run_mode=mode,
+        )
+        return {"status": "success", "runId": run_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agent/problem-resolver/{run_id}/result")
+async def get_problem_resolver_result(run_id: str):
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced resolver not available")
+    result = enhanced_resolver.get_run_result(run_id)
+    if not result:
+        return {"status": "not_found", "runId": run_id}
+    return {"status": result.get("status", "unknown"), **result}
+
+
+@app.get("/api/agent/problem-resolver/{run_id}/logs")
+async def get_problem_resolver_logs(run_id: str):
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced resolver not available")
+    logs = enhanced_resolver.get_run_logs(run_id)
+    if logs is None:
+        return Response(content="Run not found", media_type="text/plain", status_code=404)
+    # Return plain text for easy viewing in browser
+    text = "\n".join(logs)
+    return Response(content=text, media_type="text/plain")
+
+
+@app.get("/api/agent/problem-resolver/{run_id}/artifacts")
+async def get_problem_resolver_artifacts(run_id: str):
+    if not enhanced_resolver:
+        raise HTTPException(status_code=503, detail="Enhanced resolver not available")
+    try:
+        artifacts = enhanced_resolver.get_run_artifacts(run_id)
+        if artifacts is None:
+            return JSONResponse(status_code=404, content={"status": "not_found", "runId": run_id})
+        return {"status": "ok", "runId": run_id, "artifacts": artifacts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Optionally use a lightweight fake workflow for testing to avoid external calls
 USE_FAKE_WORKFLOW = os.getenv("USE_FAKE_WORKFLOW", "").lower() in ("1", "true", "yes")
@@ -246,9 +321,9 @@ else:
     from workflows.app_builder_fixed import AppBuilderWorkflowFixed
     workflow = AppBuilderWorkflowFixed(settings, build_registry)
 
-# Initialize enhanced workflow if available
+# Initialize enhanced workflow if available and not in fake mode
 enhanced_workflow = None
-if ENHANCED_FEATURES_AVAILABLE:
+if ENHANCED_FEATURES_AVAILABLE and not USE_FAKE_WORKFLOW:
     try:
         enhanced_workflow = EnhancedAppBuilderWorkflow(settings)
         initialize_enhanced_services(enhanced_workflow, settings)
@@ -355,23 +430,27 @@ async def build_app(brief: ProjectBrief):
     try:
         console.print(f"\n[bold green]Received build request:[/bold green] {brief.description}")
         
-        # Use enhanced workflow if available, otherwise fall back to standard workflow
-        active_workflow = enhanced_workflow if enhanced_workflow else workflow
-        
-        # Start the workflow
-        if enhanced_workflow and hasattr(enhanced_workflow, "start_build_from_brief"):
+        # Select active workflow. Tests set USE_FAKE_WORKFLOW=1 and patch `workflow`.
+        active_workflow = (
+            workflow
+            if USE_FAKE_WORKFLOW
+            else (enhanced_workflow if enhanced_workflow else workflow)
+        )
+
+        # Start the workflow. If using fake workflow, always call build_from_brief.
+        if (not USE_FAKE_WORKFLOW) and enhanced_workflow and hasattr(enhanced_workflow, "start_build_from_brief"):
             result = await enhanced_workflow.start_build_from_brief(
                 description=brief.description,
                 name=brief.name,
                 requirements=brief.requirements,
                 preferred_backend=brief.preferred_backend,
-                preferred_frontend=brief.preferred_frontend
+                preferred_frontend=brief.preferred_frontend,
             )
         else:
             result = await active_workflow.build_from_brief(
                 description=brief.description,
                 name=brief.name,
-                requirements=brief.requirements
+                requirements=brief.requirements,
             )
         
         return BuildResponse(
@@ -394,12 +473,11 @@ async def build_app(brief: ProjectBrief):
 async def get_build_status(build_id: str):
     """Get the status of a build"""
     try:
-        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
         status = await active_workflow.get_build_status(build_id)
         
         if not status:
-            # Avoid 404s: return a graceful error payload
-            return {"error": "build_not_found", "build_id": build_id}
+            raise HTTPException(status_code=404, detail="Build not found")
         
         return BuildStatus(**status)
         
@@ -413,7 +491,7 @@ async def get_build_status(build_id: str):
 async def list_builds():
     """List all builds"""
     try:
-        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
         builds = await active_workflow.list_builds()
         return {"builds": builds}
     except Exception as e:
@@ -447,7 +525,7 @@ async def get_generated_projects():
 async def delete_build(build_id: str):
     """Delete a build and its artifacts"""
     try:
-        active_workflow = enhanced_workflow if enhanced_workflow else workflow
+        active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
         result = await active_workflow.delete_build(build_id)
         return result
     except Exception as e:
@@ -487,6 +565,8 @@ async def detect_repository(request: DetectionRequest):
             "message": "Repository detected successfully. Review and approve commands before execution."
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         console.print(f"[bold red]Detection error:[/bold red] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -622,6 +702,20 @@ async def launch_app(request: LaunchRequest):
         
         # Generate session ID if not provided
         session_id = request.session_id or f"session-{app_path.name}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
+        # Retry governance pre-check
+        state = LAUNCH_RETRY_STATE.get(session_id, {"count": 0, "exhausted_until": 0})
+        now = time.time()
+        if state.get("exhausted_until", 0) > now:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "status": "retry_exhausted",
+                    "message": "Auto-retry cooldown active. Please wait before launching again.",
+                    "nextAllowedAt": datetime.utcfromtimestamp(state["exhausted_until"]).isoformat() + "Z",
+                    "sessionId": session_id,
+                },
+            )
         
         # Check permission
         has_permission = permission_manager.has_permission(session_id, "allow_run")
@@ -704,6 +798,9 @@ async def launch_app(request: LaunchRequest):
             duration=request.timeout,
         )
         
+        # Reset retry state on success
+        LAUNCH_RETRY_STATE[session_id] = {"count": 0, "exhausted_until": 0}
+
         return {
             "status": "success",
             "instance_id": instance["instance_id"],
@@ -719,6 +816,28 @@ async def launch_app(request: LaunchRequest):
         
     except Exception as e:
         console.print(f"[bold red]Launch error:[/bold red] {str(e)}")
+        # Update retry state
+        try:
+            sid = request.session_id or f"session-{Path(request.app_path).name}"
+            st = LAUNCH_RETRY_STATE.get(sid, {"count": 0, "exhausted_until": 0})
+            st["count"] = st.get("count", 0) + 1
+            LAUNCH_RETRY_STATE[sid] = st
+            RETRY_LIMIT = 2
+            COOLDOWN_SECONDS = 15
+            if st["count"] >= RETRY_LIMIT:
+                st["exhausted_until"] = time.time() + COOLDOWN_SECONDS
+                LAUNCH_RETRY_STATE[sid] = st
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "status": "retry_exhausted",
+                        "message": "Auto-retry limit reached. Please wait before retrying.",
+                        "nextAllowedAt": datetime.utcfromtimestamp(st["exhausted_until"]).isoformat() + "Z",
+                        "sessionId": sid,
+                    },
+                )
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -825,6 +944,8 @@ async def download_app(app_path: str):
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         console.print(f"[bold red]Download error:[/bold red] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LivePreview } from './components/LivePreview';
 import { StatusIndicator } from './components/StatusIndicator';
 import { LogsPanel } from './components/LogsPanel';
@@ -37,6 +37,12 @@ const App: React.FC = () => {
   const [resolverRunId, setResolverRunId] = useState<string | null>(null);
   const [resolverRunning, setResolverRunning] = useState(false);
   const [resolverStatus, setResolverStatus] = useState<string>('idle');
+  const [retryCount, setRetryCount] = useState(0);
+  const [autoRetryActive, setAutoRetryActive] = useState(false);
+  const [lastRunError, setLastRunError] = useState<string | null>(null);
+  const [nextRetryAt, setNextRetryAt] = useState<number | null>(null);
+  const RETRY_LIMIT = 2;
+  const retryTimeoutRef = useRef<number | null>(null);
 
   // Set up API client notification handler
   useEffect(() => {
@@ -140,7 +146,12 @@ const App: React.FC = () => {
         return;
       }
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({} as any));
+      if (!response.ok) {
+        const errMsg = (data?.detail || data?.message || 'Launch failed');
+        setLastRunError(errMsg);
+        throw new Error(errMsg);
+      }
       if (data.status === 'success') {
         setInstance({
           instanceId: data.instance_id,
@@ -153,9 +164,15 @@ const App: React.FC = () => {
           logsUrl: data.logs_url,
           expiresAt: data.expires_at
         });
+        setLastRunError(null);
+        setRetryCount(0);
+        setAutoRetryActive(false);
+        setNextRetryAt(null);
         addNotification({ type: 'success', title: 'App Running', message: 'Sandbox preview started', duration: 3000 });
       } else {
-        throw new Error(data.message || 'Launch failed');
+        const errMsg = (data?.message || 'Launch failed');
+        setLastRunError(errMsg);
+        throw new Error(errMsg);
       }
     } catch (error: any) {
       addNotification({ type: 'error', title: 'Run Failed', message: String(error?.message || error), duration: 4000 });
@@ -172,6 +189,9 @@ const App: React.FC = () => {
         body: JSON.stringify({ instance_id: instance.instanceId, force: true })
       });
       setInstance({ status: 'stopped', progress: 0 });
+      setAutoRetryActive(false);
+      setNextRetryAt(null);
+      setResolverRunning(false);
       addNotification({ type: 'info', title: 'Stopped', message: 'Sandbox instance stopped', duration: 2500 });
     } catch (e) {
       addNotification({ type: 'error', title: 'Stop Failed', message: 'Could not stop instance', duration: 3000 });
@@ -199,6 +219,11 @@ const App: React.FC = () => {
 
   const startResolverAndRerun = async () => {
     try {
+      if (retryCount >= RETRY_LIMIT) {
+        setAutoRetryActive(false);
+        addNotification({ type: 'warning', title: 'Retries Exhausted', message: 'Reached auto-retry limit. Please fix the error or run manually.', duration: 6000 });
+        return;
+      }
       setResolverRunning(true);
       setResolverStatus('starting');
       const sessionId = instance.sessionId || `session-${Date.now()}`;
@@ -216,6 +241,7 @@ const App: React.FC = () => {
       if (data.status === 'success' && data.runId) {
         setResolverRunId(data.runId);
         setResolverStatus('running');
+        setAutoRetryActive(true);
         addNotification({ type: 'info', title: 'Agents Working', message: 'Problem resolver is fixing issues...', duration: 4000 });
       } else {
         throw new Error('Could not start resolver');
@@ -227,7 +253,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Poll resolver status and auto re-run
+  // Poll resolver status and auto re-run (with retry guard and cooldown)
   useEffect(() => {
     if (!resolverRunId) return;
     let cancelled = false;
@@ -240,7 +266,23 @@ const App: React.FC = () => {
           setResolverStatus('completed');
           setResolverRunning(false);
           setResolverRunId(null);
-          await handleRun();
+          if (retryCount >= RETRY_LIMIT) {
+            setAutoRetryActive(false);
+            addNotification({ type: 'warning', title: 'Retries Exhausted', message: 'Reached auto-retry limit. Please review the error and run manually.', duration: 6000 });
+            return;
+          }
+          const cooldown = 15000;
+          const when = Date.now() + cooldown;
+          setNextRetryAt(when);
+          if (retryTimeoutRef.current) {
+            clearTimeout(retryTimeoutRef.current);
+            retryTimeoutRef.current = null;
+          }
+          retryTimeoutRef.current = window.setTimeout(async () => {
+            setNextRetryAt(null);
+            setRetryCount((c) => c + 1);
+            await handleRun();
+          }, cooldown);
         } else if (data.status === 'failed') {
           setResolverStatus('failed');
           setResolverRunning(false);
@@ -257,6 +299,17 @@ const App: React.FC = () => {
     poll();
     return () => { cancelled = true; };
   }, [resolverRunId]);
+
+  const cancelAutoRetry = () => {
+    setAutoRetryActive(false);
+    setResolverRunning(false);
+    setNextRetryAt(null);
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+    addNotification({ type: 'info', title: 'Auto-Retry Cancelled', message: 'Stopped automatic retries.', duration: 3000 });
+  };
 
   const previewActive = Boolean(instance.previewUrl && instance.instanceId);
   const previewStatusLabel = previewActive ? 'Live' : 'Not Running';
@@ -442,8 +495,9 @@ const App: React.FC = () => {
                     <span className={`text-xs font-semibold tracking-wide px-3 py-1 rounded-full ${previewStatusClass}`}>
                       {previewStatusLabel}
                     </span>
-                    <button onClick={handleRun} className="px-3 py-1 rounded bg-green-600 text-white text-sm hover:bg-green-700"><i className="fas fa-play mr-1"></i>Run</button>
-                    <button onClick={handleDeploy} className="px-3 py-1 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700"><i className="fas fa-cloud-upload-alt mr-1"></i>Deploy</button>
+                    <button onClick={handleRun} disabled={resolverRunning || autoRetryActive} className="px-3 py-1 rounded bg-green-600 text-white text-sm disabled:opacity-50 hover:bg-green-700"><i className="fas fa-play mr-1"></i>Run</button>
+                    <button onClick={startResolverAndRerun} disabled={resolverRunning} className="px-3 py-1 rounded bg-amber-600 text-white text-sm disabled:opacity-50 hover:bg-amber-700"><i className="fas fa-wrench mr-1"></i>Diagnose</button>
+                    <button onClick={handleDeploy} disabled={!previewActive} className="px-3 py-1 rounded bg-indigo-600 text-white text-sm disabled:opacity-50 hover:bg-indigo-700"><i className="fas fa-cloud-upload-alt mr-1"></i>Deploy</button>
                     <button onClick={handleStop} disabled={!instance.instanceId} className="px-3 py-1 rounded bg-red-600 text-white text-sm disabled:opacity-50 hover:bg-red-700"><i className="fas fa-stop mr-1"></i>Stop</button>
                   </div>
                 </div>
@@ -473,8 +527,42 @@ const App: React.FC = () => {
                             </>
                           )}
                         </div>
+                        {lastRunError && (
+                          <div className="max-w-xl mx-auto bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded">
+                            {lastRunError}
+                          </div>
+                        )}
+                        {autoRetryActive && nextRetryAt && (
+                          <div className="text-xs text-gray-500">Auto-retrying in ~{Math.max(0, Math.ceil((nextRetryAt - Date.now())/1000))}s (attempt {retryCount + 1}/{RETRY_LIMIT})</div>
+                        )}
+                        {(resolverRunning || autoRetryActive) && (
+                          <div className="flex items-center justify-center gap-3 mt-2">
+                            {resolverRunId && (
+                              <>
+                                <a
+                                  href={`/api/agent/problem-resolver/${resolverRunId}/logs`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:text-blue-700"
+                                >
+                                  View resolver logs
+                                </a>
+                                <span className="text-gray-300">|</span>
+                                <a
+                                  href={`/api/agent/problem-resolver/${resolverRunId}/artifacts`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:text-blue-700"
+                                >
+                                  View resolver artifacts
+                                </a>
+                              </>
+                            )}
+                            <button onClick={cancelAutoRetry} className="px-3 py-1 rounded bg-gray-200 text-gray-700 text-xs hover:bg-gray-300">Cancel auto‑retry</button>
+                          </div>
+                        )}
                         {!resolverRunning && (
-                          <button onClick={handleRun} className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm"><i className="fas fa-play mr-1"></i>Run</button>
+                          <button onClick={handleRun} disabled={autoRetryActive} className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm disabled:opacity-50"><i className="fas fa-play mr-1"></i>Run</button>
                         )}
                       </div>
                     </div>

@@ -8,6 +8,8 @@ from langchain.schema import HumanMessage, SystemMessage
 
 from config.settings import Settings
 from .templates.frontend_templates import FrontendTemplates
+from services.retry_utils import call_llm_with_retry
+from services.framework_registry import get_framework_manifest
 
 
 class FrontendAgent:
@@ -52,6 +54,27 @@ class FrontendAgent:
             "tsconfig": self._generate_tsconfig()
         }
         
+        # Enforce React/Vite manifest on package.json
+        manifest = get_framework_manifest("react-vite") or {}
+        pkg_raw = code.get("package_json") or "{}"
+        try:
+            pkg = json.loads(pkg_raw)
+            scripts = pkg.setdefault("scripts", {})
+            for k, v in (manifest.get("required_scripts") or {}).items():
+                scripts.setdefault(k, v)
+            deps = pkg.setdefault("dependencies", {})
+            for d in (manifest.get("required_dependencies") or []):
+                if d not in deps:
+                    deps[d] = "^18.2.0" if d.startswith("react") else "^1.0.0"
+            dev = pkg.setdefault("devDependencies", {})
+            for d in (manifest.get("required_dev_dependencies") or []):
+                if d not in dev:
+                    dev[d] = "^5.0.0" if d == "vite" else "^1.0.0"
+            code["package_json"] = json.dumps(pkg, indent=2)
+        except Exception:
+            # Leave as-is if not valid JSON
+            pass
+        
         return code
     
     async def _generate_main_tsx(self) -> str:
@@ -76,7 +99,7 @@ Use React 18+ with TypeScript and modern hooks."""
             HumanMessage(content=f"User Flows:\n{json.dumps(user_flows, indent=2)}\n\nGenerate App.tsx")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_app_template()
     
     async def _generate_router(self, user_flows: list[dict]) -> str:
@@ -96,7 +119,7 @@ Use React Router v6+ with TypeScript."""
             HumanMessage(content=f"User Flows:\n{json.dumps(user_flows, indent=2)}\n\nGenerate router.tsx")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_router_template()
     
     async def _generate_api_client(self, endpoints: list[dict]) -> str:
@@ -117,7 +140,7 @@ Use axios with TypeScript generics."""
             HumanMessage(content=f"API Endpoints:\n{json.dumps(endpoints, indent=2)}\n\nGenerate api.ts")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_api_client_template()
     
     async def _generate_auth_context(self) -> str:
@@ -138,7 +161,7 @@ Use React Context API with TypeScript."""
             HumanMessage(content="Generate AuthContext.tsx with full authentication logic")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_auth_context_template()
     
     async def _generate_pages(self, user_flows: list[dict], tasks: list[dict]) -> dict:
@@ -165,7 +188,7 @@ Use modern React patterns and best practices."""
                 HumanMessage(content=f"User Flows:\n{json.dumps(user_flows, indent=2)}\n\nGenerate {page_name}.tsx page")
             ]
             
-            response = await self.llm.ainvoke(messages)
+            response = await call_llm_with_retry(self.llm, messages)
             pages[page_name] = self._extract_code(response.content) or self.templates.get_page_template(page_name)
         
         return pages
@@ -192,7 +215,7 @@ Follow component best practices."""
                 HumanMessage(content=f"Generate {component_name}.tsx component")
             ]
             
-            response = await self.llm.ainvoke(messages)
+            response = await call_llm_with_retry(self.llm, messages)
             components[component_name] = self._extract_code(response.content) or self.templates.get_component_template(component_name)
         
         return components
@@ -215,7 +238,7 @@ Use TypeScript best practices with strict typing."""
             HumanMessage(content=f"Specifications:\n{json.dumps(specs, indent=2)}\n\nGenerate types.ts")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_types_template()
     
     def _generate_index_html(self) -> str:

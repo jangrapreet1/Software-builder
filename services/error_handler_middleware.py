@@ -119,6 +119,20 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             # Process request
             response = await call_next(request)
             
+            # If the downstream produced an error response (e.g., HTTPException handled by FastAPI),
+            # convert it into our structured error format
+            if response.status_code >= 400:
+                class _HTTPStatusError(Exception):
+                    def __init__(self, status_code: int, message: str = ""):
+                        super().__init__(message or f"HTTP {status_code}")
+                        self.status_code = status_code
+
+                return await self._handle_error(
+                    request,
+                    _HTTPStatusError(response.status_code),
+                    request_id,
+                )
+
             # Track response
             if self.metrics_enabled:
                 self.metrics_collector.increment_counter(
@@ -189,19 +203,25 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 }
             )
         
-        # Audit log
+        # Audit log using a supported event type (no generic ERROR in enum)
         if self.audit_enabled:
-            audit_logger.log_event(
-                event_type=AuditEventType.ERROR,
-                details={
-                    "category": category,
-                    "message": str(exc),
-                    "endpoint": request.url.path,
-                    "status_code": status_code
-                },
-                user=user_id or "anonymous",
-                success=False
-            )
+            try:
+                event_type = getattr(AuditEventType, "SECURITY_VIOLATION", None)
+                if event_type is not None:
+                    audit_logger.log_event(
+                        event_type=event_type,
+                        details={
+                            "category": category,
+                            "message": str(exc),
+                            "endpoint": request.url.path,
+                            "status_code": status_code,
+                        },
+                        user=user_id or "anonymous",
+                        success=False,
+                    )
+            except Exception:
+                # Never let audit failures impact error responses
+                pass
         
         # Build response
         error_response = {

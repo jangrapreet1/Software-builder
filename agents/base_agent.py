@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import Enum
 import traceback
 import time
+from services.agent_bus import bus
 
 
 class AgentStatus(Enum):
@@ -153,6 +154,10 @@ class BaseAgent(ABC):
         """
         self._current_status = AgentStatus.RUNNING
         context.add_telemetry("agent_started", {"agent": self.agent_name})
+        try:
+            bus.publish("agent.events", {"event": "started", "agent": self.agent_name, "build_id": context.build_id})
+        except Exception:
+            pass
         
         start_time = time.time()
         result = None
@@ -192,6 +197,10 @@ class BaseAgent(ABC):
                 "error": str(e),
                 "traceback": error_trace
             })
+            try:
+                bus.publish("agent.events", {"event": "error", "agent": self.agent_name, "build_id": context.build_id, "error": str(e)})
+            except Exception:
+                pass
             
             result = ExecutionResult(
                 status=AgentStatus.FAILED,
@@ -215,6 +224,10 @@ class BaseAgent(ABC):
                     "agent": self.agent_name,
                     "status": result.status.value
                 })
+                try:
+                    bus.publish("agent.events", {"event": "completed", "agent": self.agent_name, "build_id": context.build_id, "status": result.status.value})
+                except Exception:
+                    pass
         
         return result
     

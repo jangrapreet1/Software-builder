@@ -301,6 +301,29 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
         isLoading={isAnalyzing}
       />
 
+      {/* Resolver artifacts quick links */}
+      {currentRunId && (
+        <div className="text-center text-sm text-gray-600">
+          <a
+            href={`/api/agent/problem-resolver/${currentRunId}/logs`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-700"
+          >
+            View resolver logs
+          </a>
+          <span className="mx-2 text-gray-300">|</span>
+          <a
+            href={`/api/agent/problem-resolver/${currentRunId}/artifacts`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-700"
+          >
+            View resolver artifacts
+          </a>
+        </div>
+      )}
+
       {/* Pull Requests */}
       {pullRequests.length > 0 && (
         <div className="space-y-4">

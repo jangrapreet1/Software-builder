@@ -4,6 +4,7 @@ Coordinator Agent - Analyzes briefs and orchestrates the build process
 import json
 from typing import Any
 from langchain_google_genai import ChatGoogleGenerativeAI
+from services.retry_utils import call_llm_with_retry
 from langchain.schema import HumanMessage, SystemMessage
 
 from config.settings import Settings
@@ -54,7 +55,7 @@ Be thorough and infer reasonable requirements from the brief. Return ONLY valid 
                 HumanMessage(content=f"Project Brief: {brief}")
             ]
             
-            response = await self.llm.ainvoke(messages)
+            response = await call_llm_with_retry(self.llm, messages)
             
             # Try to extract JSON from response
             content = response.content.strip()
@@ -116,7 +117,7 @@ Return ONLY valid JSON."""
                 HumanMessage(content=f"Requirements:\n{context}\n\nGenerate technical specifications.")
             ]
             
-            response = await self.llm.ainvoke(messages)
+            response = await call_llm_with_retry(self.llm, messages)
             
             # Try to extract JSON
             content = response.content.strip()
@@ -162,7 +163,7 @@ Return ONLY valid JSON with "backend" and "frontend" arrays."""
                 HumanMessage(content=f"Technical Specs:\n{context}\n\nCreate task breakdown.")
             ]
             
-            response = await self.llm.ainvoke(messages)
+            response = await call_llm_with_retry(self.llm, messages)
             
             # Try to extract JSON
             content = response.content.strip()

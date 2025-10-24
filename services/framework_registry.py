@@ -73,6 +73,7 @@ class FrameworkRegistry:
     
     def __init__(self):
         self.frameworks: Dict[str, Framework] = {}
+        self.manifests: Dict[str, Dict] = {}
         self._register_frameworks()
     
     def _register_frameworks(self):
@@ -101,6 +102,15 @@ class FrameworkRegistry:
             performance=9,
             documentation_url="https://react.dev"
         ))
+        # Manifest for React + Vite
+        self.manifests["react-vite"] = {
+            "required_scripts": {
+                "build": "tsc && vite build"
+            },
+            "required_dependencies": ["react", "react-dom"],
+            "required_dev_dependencies": ["vite", "typescript", "@vitejs/plugin-react"],
+            "structure": ["index.html", "src/main.tsx", "src/App.tsx", "vite.config.ts"]
+        }
         
         # Next.js
         self.register(Framework(
@@ -235,6 +245,31 @@ class FrameworkRegistry:
             performance=10,
             documentation_url="https://fastapi.tiangolo.com"
         ))
+        # Manifest for FastAPI
+        self.manifests["fastapi"] = {
+            "required_packages": [
+                "fastapi",
+                "uvicorn[standard]",
+                "pydantic",
+                "pydantic-settings",
+                "sqlalchemy",
+                "python-jose[cryptography]",
+                "passlib[bcrypt]",
+                "python-multipart",
+                "alembic",
+                "pytest",
+                "pytest-asyncio",
+                "httpx",
+            ],
+            "structure": [
+                "main.py",
+                "models.py",
+                "schemas.py",
+                "database.py",
+                "config.py",
+                "requirements.txt",
+            ],
+        }
         
         # Django + DRF
         self.register(Framework(
@@ -467,3 +502,8 @@ def get_framework_registry() -> FrameworkRegistry:
     if _framework_registry is None:
         _framework_registry = FrameworkRegistry()
     return _framework_registry
+
+def get_framework_manifest(framework_id: str) -> Optional[Dict]:
+    """Convenience accessor to fetch a framework manifest"""
+    registry = get_framework_registry()
+    return registry.manifests.get(framework_id)

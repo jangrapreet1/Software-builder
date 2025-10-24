@@ -14,8 +14,20 @@ import json
 
 from workflows.app_builder import AppBuilderWorkflow
 from config.settings import Settings
-from services.permission_manager import PermissionManager
-from services.framework_registry import get_framework_registry, FrameworkType
+from coordinator.services.permission_manager import PermissionManager
+try:
+    from services.framework_registry import get_framework_registry, FrameworkType
+except ModuleNotFoundError:
+    # Allow execution when run as package (e.g., coordinator.main)
+    from coordinator.services.framework_registry import get_framework_registry, FrameworkType  # type: ignore
+
+try:
+    from api.enhanced_endpoints_v2 import router as v2_router, initialize_enhanced_services as init_v2
+except ModuleNotFoundError:
+    from coordinator.api.enhanced_endpoints_v2 import (  # type: ignore
+        router as v2_router,
+        initialize_enhanced_services as init_v2,
+    )
 
 # Load environment variables
 load_dotenv()
@@ -112,6 +124,13 @@ else:
     # Initialize FIXED workflow
     from workflows.app_builder_fixed import AppBuilderWorkflowFixed
     workflow = AppBuilderWorkflowFixed(settings)
+
+# Initialize and mount Enhanced V2 endpoints (non-breaking)
+try:
+    init_v2(workflow, settings)
+    app.include_router(v2_router)
+except Exception as e:
+    console.print(f"[bold yellow]Skipping Enhanced V2 endpoints: {e}[/bold yellow]")
 
 
 class ProjectBrief(BaseModel):
@@ -280,7 +299,7 @@ async def permissions_stats():
         return {"stats": {"total_permissions": 0, "active_permissions": 0, "total_executions": 0}, "error": str(e)}
 
 
-@app.get("/api/v2/frameworks")
+@app.get("/api/v2/frameworks-legacy")
 async def list_frameworks(framework_type: str | None = None):
     """List available frameworks filtered by type (backend|frontend)"""
     try:

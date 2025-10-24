@@ -513,11 +513,13 @@ class TemplateLibrary:
             "total_templates": total,
             "by_category": by_category,
             "by_difficulty": by_difficulty,
-            "most_used": sorted(
-                self.templates.values(),
-                key=lambda t: t.usage_count,
-                reverse=True
-            )[:5]
+            "most_used": [
+                t.to_dict() for t in sorted(
+                    self.templates.values(),
+                    key=lambda t: t.usage_count,
+                    reverse=True
+                )[:5]
+            ]
         }
 
 

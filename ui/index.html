@@ -133,6 +133,27 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Template Gallery -->
+                <div class="mt-8 pt-6 border-t border-gray-200">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-xl font-semibold text-gray-800"><i class="fas fa-layer-group mr-2"></i>Templates</h3>
+                        <button @click="loadTemplates" class="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded">Refresh</button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div v-for="tpl in templates" :key="tpl.template_id" class="border rounded-lg p-4 hover:shadow">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="font-semibold">{{ tpl.name }}</div>
+                                <span class="text-xs px-2 py-0.5 rounded bg-gray-100">{{ tpl.category }}</span>
+                            </div>
+                            <div class="text-sm text-gray-600 line-clamp-3">{{ tpl.description }}</div>
+                            <div class="mt-3 flex items-center justify-between">
+                                <button @click="applyTemplate(tpl.template_id)" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Use</button>
+                                <span class="text-xs text-gray-500">⏱ {{ tpl.estimated_time }}m</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Current Build Status -->
@@ -172,6 +193,84 @@
                             <span class="text-gray-400 text-xs ml-2">{{ formatTime(log.timestamp) }}</span>
                         </div>
                     </div>
+                </div>
+
+                <div class="mb-4 flex space-x-2 text-sm">
+                    <button @click="activeTab = 'Status'" :class="tabClass('Status')">Status</button>
+                    <button @click="activeTab = 'Logs'" :class="tabClass('Logs')">Logs</button>
+                    <button @click="activeTab = 'Preview'" :class="tabClass('Preview')">Preview</button>
+                    <button @click="activeTab = 'Metrics'" :class="tabClass('Metrics')">Metrics</button>
+                    <button @click="activeTab = 'Errors'" :class="tabClass('Errors')">Errors</button>
+                </div>
+
+                <div v-if="activeTab === 'Status'" class="text-sm text-gray-700">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="p-3 rounded bg-gray-50">Build ID: <span class="font-mono break-all">{{ currentBuild.build_id }}</span></div>
+                        <div class="p-3 rounded bg-gray-50">Step: {{ currentBuild.current_step }}</div>
+                        <div class="p-3 rounded bg-gray-50">Progress: {{ currentBuild.progress }}%</div>
+                    </div>
+                </div>
+
+                <div v-if="activeTab === 'Logs'" class="space-y-2 max-h-64 overflow-y-auto">
+                    <div
+                        v-for="(log, index) in currentBuild.logs"
+                        :key="index"
+                        class="flex items-start space-x-2 text-sm cursor-pointer"
+                        @click="onLogClick(log)"
+                        :title="log.level === 'error' ? 'Click for help' : ''"
+                    >
+                        <i class="fas mt-1" :class="{
+                            'fa-check-circle text-green-500': log.level === 'success',
+                            'fa-info-circle text-blue-500': log.level === 'info',
+                            'fa-exclamation-triangle text-yellow-500': log.level === 'warning',
+                            'fa-times-circle text-red-500': log.level === 'error'
+                        }"></i>
+                        <div>
+                            <span class="text-gray-700">{{ log.message }}</span>
+                            <span class="text-gray-400 text-xs ml-2">{{ formatTime(log.timestamp) }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="activeTab === 'Preview'" class="space-y-3">
+                    <div class="flex space-x-2">
+                        <input v-model="preview.project_name" placeholder="project name" class="px-3 py-2 border rounded w-48"/>
+                        <input v-model="preview.project_path" placeholder="project path (generated/<name>)" class="px-3 py-2 border rounded flex-1"/>
+                        <button @click="startPreview" class="px-3 py-2 bg-green-600 text-white rounded">Start</button>
+                        <button @click="stopPreview" class="px-3 py-2 bg-red-600 text-white rounded">Stop</button>
+                        <button @click="checkPreviewHealth" class="px-3 py-2 bg-gray-200 rounded">Health</button>
+                    </div>
+                    <div v-if="preview.status" class="text-sm text-gray-700">Status: {{ preview.status }}</div>
+                    <div v-if="preview.urls && preview.urls.frontend_url" class="text-sm"><a :href="preview.urls.frontend_url" target="_blank" class="text-blue-600 underline">Open Frontend</a></div>
+                    <div v-if="preview.urls && preview.urls.api_url" class="text-sm"><a :href="preview.urls.api_url" target="_blank" class="text-blue-600 underline">Open API</a></div>
+                </div>
+
+                <div v-if="activeTab === 'Metrics'" class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    <div class="p-4 bg-gray-50 rounded">
+                        <div class="text-gray-500">Total Builds</div>
+                        <div class="text-xl font-bold">{{ metrics.builds.total || 0 }}</div>
+                    </div>
+                    <div class="p-4 bg-gray-50 rounded">
+                        <div class="text-gray-500">Successful</div>
+                        <div class="text-xl font-bold">{{ metrics.builds.successful || 0 }}</div>
+                    </div>
+                    <div class="p-4 bg-gray-50 rounded">
+                        <div class="text-gray-500">Failed</div>
+                        <div class="text-xl font-bold">{{ metrics.builds.failed || 0 }}</div>
+                    </div>
+                </div>
+
+                <div v-if="activeTab === 'Errors'" class="text-sm text-gray-700">
+                    <div v-if="errorHelper.enhanced">
+                        <div class="font-semibold mb-1">{{ errorHelper.enhanced.user_friendly_message }}</div>
+                        <ul class="list-disc ml-6">
+                            <li v-for="(s, i) in (errorHelper.enhanced.suggestions || [])" :key="i">{{ s }}</li>
+                        </ul>
+                        <div v-if="errorHelper.enhanced.documentation_link" class="mt-2">
+                            <a :href="errorHelper.enhanced.documentation_link" target="_blank" class="text-blue-600 underline">Documentation</a>
+                        </div>
+                    </div>
+                    <div v-else class="text-gray-500">Click an error log to see suggestions.</div>
                 </div>
             </div>
 
@@ -239,6 +338,33 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Framework Wizard -->
+            <div class="bg-white rounded-lg shadow-lg p-8 mt-8">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6"><i class="fas fa-wand-magic-sparkles mr-2"></i>Framework Wizard</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="frameworkType" class="block text-sm text-gray-700 mb-2">Type</label>
+                        <select id="frameworkType" aria-label="Framework Type" v-model="frameworkType" class="w-full border rounded px-3 py-2">
+                            <option value="frontend">Frontend</option>
+                            <option value="backend">Backend</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-700 mb-2">Language Preference</label>
+                        <input v-model="frameworkPrefs.language" class="w-full border rounded px-3 py-2" placeholder="e.g., TypeScript, Python"/>
+                    </div>
+                    <div class="flex items-end">
+                        <button @click="recommendFramework" class="w-full px-3 py-2 bg-indigo-600 text-white rounded">Recommend</button>
+                    </div>
+                </div>
+                <div class="mt-4" v-if="recommendedFramework">
+                    <div class="p-4 bg-gray-50 rounded">
+                        <div class="font-semibold">Recommended: {{ recommendedFramework.name }}</div>
+                        <div class="text-sm text-gray-600">{{ recommendedFramework.description }}</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -248,7 +374,7 @@
         createApp({
             data() {
                 return {
-                    apiUrl: 'https://localhost:5443',
+                    apiUrl: '',
                     apiStatus: 'Checking...',
                     projectBrief: '',
                     projectName: '',
@@ -256,6 +382,15 @@
                     building: false,
                     currentBuild: null,
                     builds: [],
+                    ws: null,
+                    activeTab: 'Status',
+                    templates: [],
+                    frameworkType: 'frontend',
+                    frameworkPrefs: { language: '' },
+                    recommendedFramework: null,
+                    metrics: { builds: { total: 0, successful: 0, failed: 0 } },
+                    preview: { project_name: '', project_path: '', status: '', urls: {} },
+                    errorHelper: { enhanced: null },
                     examples: [
                         'Build a task management app with user authentication',
                         'Create a blog platform with comments and likes',
@@ -265,16 +400,24 @@
                 }
             },
             mounted() {
+                this.apiUrl = window.location.origin;
                 this.checkApiStatus();
                 this.refreshBuilds();
-                // Poll for updates every 5 seconds
+                // Poll fallback for status every 5 seconds
                 setInterval(() => {
                     if (this.currentBuild) {
                         this.updateBuildStatus();
                     }
                 }, 5000);
+                // Periodic metrics refresh
+                setInterval(() => { this.loadMetrics(); }, 8000);
+                this.loadTemplates();
+                this.loadMetrics();
             },
             methods: {
+                tabClass(tab) {
+                    return 'px-3 py-1 rounded ' + (this.activeTab === tab ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200');
+                },
                 async checkApiStatus() {
                     try {
                         const response = await fetch(`${this.apiUrl}/health`);
@@ -313,6 +456,7 @@
                                 current_step: 'Starting...',
                                 logs: result.logs || []
                             };
+                            this.connectWebSocket(this.currentBuild.build_id);
                             this.refreshBuilds();
                         } else {
                             alert('Build failed: ' + (result.detail || 'Unknown error'));
@@ -323,29 +467,32 @@
                         this.building = false;
                     }
                 },
+                connectWebSocket(buildId) {
+                    try {
+                        const wsScheme = this.apiUrl.startsWith('https') ? 'wss' : 'ws';
+                        const wsUrl = `${wsScheme}://${window.location.host}/ws/build/${buildId}`;
+                        this.ws = new WebSocket(wsUrl);
+                        this.ws.onmessage = (evt) => {
+                            try {
+                                const status = JSON.parse(evt.data);
+                                if (status && status.build_id === buildId) {
+                                    this.currentBuild = status;
+                                }
+                            } catch {}
+                        };
+                        this.ws.onclose = () => { this.ws = null; };
+                        this.ws.onerror = () => { this.ws = null; };
+                    } catch {}
+                },
                 async updateBuildStatus() {
                     if (!this.currentBuild) return;
                     
                     try {
                         const response = await fetch(`${this.apiUrl}/api/build/${this.currentBuild.build_id}/status`);
                         const status = await response.json();
-                        
                         this.currentBuild = status;
-                        
-                        if (status.status === 'success' || status.status === 'failed') {
-                            this.refreshBuilds();
-                        }
                     } catch (error) {
                         console.error('Error updating build status:', error);
-                    }
-                },
-                async refreshBuilds() {
-                    try {
-                        const response = await fetch(`${this.apiUrl}/api/builds`);
-                        const data = await response.json();
-                        this.builds = data.builds || [];
-                    } catch (error) {
-                        console.error('Error refreshing builds:', error);
                     }
                 },
                 async viewBuild(buildId) {
@@ -353,6 +500,7 @@
                         const response = await fetch(`${this.apiUrl}/api/build/${buildId}/status`);
                         const status = await response.json();
                         this.currentBuild = status;
+                        this.connectWebSocket(buildId);
                     } catch (error) {
                         alert('Error loading build details');
                     }
@@ -368,6 +516,86 @@
                     if (!timestamp) return '';
                     const date = new Date(timestamp);
                     return date.toLocaleTimeString();
+                },
+                async loadTemplates() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/v2/templates`);
+                        const data = await res.json();
+                        this.templates = data.templates || [];
+                    } catch {}
+                },
+                async applyTemplate(templateId) {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/v2/templates/${templateId}/use`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data && data.build_spec) {
+                            this.projectBrief = data.build_spec.description || '';
+                            const reqs = data.build_spec.features || [];
+                            this.requirements = reqs.join(', ');
+                            this.projectName = data.build_spec.name || '';
+                        }
+                    } catch {}
+                },
+                async recommendFramework() {
+                    try {
+                        const payload = {
+                            project_type: 'web-app',
+                            framework_type: this.frameworkType,
+                            preferences: {}
+                        };
+                        if (this.frameworkPrefs.language) payload.preferences.language = this.frameworkPrefs.language;
+                        const res = await fetch(`${this.apiUrl}/api/v2/frameworks/recommend`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        this.recommendedFramework = data.recommended || null;
+                    } catch {}
+                },
+                async loadMetrics() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/metrics/dashboard`);
+                        const data = await res.json();
+                        this.metrics = data || this.metrics;
+                    } catch {}
+                },
+                async startPreview() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/preview/start`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ project_name: this.preview.project_name, project_path: this.preview.project_path })
+                        });
+                        const data = await res.json();
+                        this.preview = { ...this.preview, ...data, status: data.status || 'started' };
+                    } catch {}
+                },
+                async stopPreview() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/preview/stop`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ project_name: this.preview.project_name })
+                        });
+                        const data = await res.json();
+                        this.preview.status = data.status || 'stopped';
+                    } catch {}
+                },
+                async checkPreviewHealth() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/preview/health/${this.preview.project_name}`);
+                        const data = await res.json();
+                        this.preview.status = data.status;
+                    } catch {}
+                },
+                async onLogClick(log) {
+                    if (!log || log.level !== 'error') return;
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/v2/errors/enhance`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ error_message: log.message })
+                        });
+                        const data = await res.json();
+                        this.errorHelper.enhanced = data;
+                        this.activeTab = 'Errors';
+                    } catch {}
                 }
             }
         }).mount('#app');

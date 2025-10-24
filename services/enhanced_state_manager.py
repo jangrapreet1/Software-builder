@@ -91,6 +91,9 @@ class EnhancedStateManager:
     def save_state(self, build_id: str, state: Dict) -> bool:
         """Save state atomically with backup"""
         try:
+            # Accept 'status' as an alias for 'build_status' to be backward-compatible with callers
+            if "build_status" not in state and "status" in state:
+                state["build_status"] = state["status"]
             # Validate state
             if not self._validate_state(state):
                 raise ValueError("Invalid state structure")
@@ -349,8 +352,10 @@ class EnhancedStateManager:
     
     def _validate_state(self, state: Dict) -> bool:
         """Validate state structure"""
-        required_fields = ["build_id", "build_status"]
-        return all(field in state for field in required_fields)
+        # Allow either 'build_status' or legacy 'status'
+        has_id = "build_id" in state
+        has_status = ("build_status" in state) or ("status" in state)
+        return has_id and has_status
     
     def _deep_merge(self, target: Dict, source: Dict):
         """Deep merge source into target"""

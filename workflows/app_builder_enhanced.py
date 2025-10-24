@@ -20,12 +20,20 @@ from agents.backend_agent import BackendAgent
 from agents.integration_agent import IntegrationAgent
 from agents.problem_resolver_agent import ProblemResolverAgent
 from agents.tester_agent import TesterAgent
+from agents.dependency_agent import DependencyAgent
+from agents.base_agent import ExecutionContext
+from services.preflight_validator import PreflightValidator
+from agents.supervisor_orchestrator import SupervisorOrchestrator
+from agents.quality_agent import QualityAgent
+from agents.monitoring_agent import MonitoringAgent
 from config.settings import Settings
 from services.enhanced_state_manager import EnhancedStateManager
 from services.build_validator import BuildValidator
 from services.error_feedback_system import ErrorFeedbackSystem
 from services.metrics_collector import get_metrics_collector
 from services.activity_notifier import publish as publish_activity
+from services.learning_engine import get_learning_engine
+from services.persistent_build_storage import get_build_storage
 
 
 class AppBuilderState(TypedDict):
@@ -98,6 +106,7 @@ class EnhancedAppBuilderWorkflow:
         self.state_manager = EnhancedStateManager(artifacts_dir)
         self.error_feedback = ErrorFeedbackSystem(artifacts_dir / "error_feedback")
         self.metrics = get_metrics_collector()
+        self.storage = get_build_storage()
         
         # Initialize LLM
         self.llm = ChatGoogleGenerativeAI(
@@ -113,6 +122,10 @@ class EnhancedAppBuilderWorkflow:
         self.integration_agent = IntegrationAgent(self.llm, settings)
         self.problem_resolver = ProblemResolverAgent(self.llm, settings)
         self.tester_agent = TesterAgent(self.llm, settings)
+        self.dependency_agent = DependencyAgent(self.llm, settings)
+        self.supervisor = SupervisorOrchestrator()
+        self.quality_agent = QualityAgent(self.llm, settings)
+        self.monitoring_agent = MonitoringAgent(self.llm, settings)
         
         print(f"[Enhanced Workflow] Initialized with state manager at {artifacts_dir}")
     
@@ -146,7 +159,8 @@ class EnhancedAppBuilderWorkflow:
         
         # Start metrics tracking
         self.metrics.increment_counter("builds.total")
-        self.metrics.set_gauge("builds.active", self.metrics.get_gauge("builds.active") or 0 + 1)
+        # Ensure correct arithmetic with default 0
+        self.metrics.set_gauge("builds.active", (self.metrics.get_gauge("builds.active") or 0) + 1)
         build_start_time = time.time()
         
         # Get error feedback for planning
@@ -159,6 +173,11 @@ class EnhancedAppBuilderWorkflow:
         
         # Save initial state
         self.state_manager.save_state(build_id, initial_state)
+        # Persist initial record
+        try:
+            self.storage.save_build(build_id, self._build_record(build_id, initial_state))
+        except Exception:
+            pass
         
         try:
             # Execute workflow with state persistence
@@ -177,6 +196,12 @@ class EnhancedAppBuilderWorkflow:
             
             # Save final state
             self.state_manager.save_state(build_id, final_state)
+            # Persist final record and metrics
+            try:
+                self.storage.save_build(build_id, self._build_record(build_id, final_state))
+                self.storage.save_metrics(build_id, self._compute_metrics(final_state, build_duration))
+            except Exception:
+                pass
             
             # Update metrics
             build_duration = time.time() - build_start_time
@@ -211,6 +236,12 @@ class EnhancedAppBuilderWorkflow:
             })
             
             self.state_manager.save_state(build_id, state)
+            try:
+                self.storage.save_build(build_id, self._build_record(build_id, state))
+                self.storage.add_log(build_id, "error", error_msg)
+                self.storage.save_metrics(build_id, self._compute_metrics(state, build_duration))
+            except Exception:
+                pass
             
             # Update metrics
             build_duration = time.time() - build_start_time
@@ -318,6 +349,11 @@ class EnhancedAppBuilderWorkflow:
             final_state["progress"] = 100
             final_state["current_step"] = "Complete"
             self.state_manager.save_state(build_id, final_state)
+            try:
+                self.storage.save_build(build_id, self._build_record(build_id, final_state))
+                self.storage.save_metrics(build_id, self._compute_metrics(final_state, build_duration))
+            except Exception:
+                pass
 
             build_duration = time.time() - build_start_time
             self.metrics.increment_counter("builds.successful")
@@ -334,6 +370,12 @@ class EnhancedAppBuilderWorkflow:
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             })
             self.state_manager.save_state(build_id, state)
+            try:
+                self.storage.save_build(build_id, self._build_record(build_id, state))
+                self.storage.add_log(build_id, "error", error_msg)
+                self.storage.save_metrics(build_id, self._compute_metrics(state, build_duration))
+            except Exception:
+                pass
 
             build_duration = time.time() - build_start_time
             self.metrics.increment_counter("builds.failed")
@@ -359,64 +401,62 @@ class EnhancedAppBuilderWorkflow:
         run_tests: bool,
         feedback: dict
     ) -> dict:
-        """Execute complete workflow with checkpointing"""
-        
-        # Step 1: Analyze brief with feedback
-        state = await self._checkpoint_step(
-            build_id, state, "analyze_brief",
-            lambda s: self._analyze_brief_enhanced(s, feedback)
-        )
-        
-        # Step 2: Generate specifications
-        state = await self._checkpoint_step(
-            build_id, state, "generate_specs",
-            self._generate_specs
-        )
-        
-        # Step 3: Plan tasks
-        state = await self._checkpoint_step(
-            build_id, state, "plan_tasks",
-            self._plan_tasks
-        )
-        
-        # Step 4: Generate backend
-        state = await self._checkpoint_step(
-            build_id, state, "generate_backend",
-            self._generate_backend
-        )
-        
-        # Step 5: Generate frontend
-        state = await self._checkpoint_step(
-            build_id, state, "generate_frontend",
-            self._generate_frontend
-        )
-        
-        # Step 6: Integrate code
-        state = await self._checkpoint_step(
-            build_id, state, "integrate_code",
-            self._integrate_code
-        )
-        
-        # Step 7: Comprehensive validation
-        state = await self._checkpoint_step(
-            build_id, state, "validate_build",
-            self._validate_build_comprehensive
-        )
-        
-        # Step 8: Auto-resolve problems if enabled
+        """Execute complete workflow with checkpointing via Supervisor plan"""
+        # Build a plan with flags
+        flags = {"enable_resolution": enable_resolution, "run_tests": run_tests}
+        plan = self.supervisor.plan({"goal": "build_application"}, flags)
+        # Map plan steps to functions
+        step_funcs = {
+            "analyze_brief": lambda s: self._analyze_brief_enhanced(s, feedback),
+            "generate_specs": self._generate_specs,
+            "plan_tasks": self._plan_tasks,
+            "generate_backend": self._generate_backend,
+            "generate_frontend": self._generate_frontend,
+            "integrate": self._integrate_code,
+            "preflight": self._preflight_check,
+            "validate": self._validate_build_comprehensive,
+            "monitor": self._monitor_feedback,
+            "resolve": self._resolve_problems,
+            "test": self._run_tests,
+        }
+        # Build the concrete ordered list honoring flags
+        ordered = [
+            "analyze_brief", "generate_specs", "plan_tasks",
+            "generate_backend", "generate_frontend", "integrate",
+            "preflight", "validate", "monitor",
+        ]
         if enable_resolution:
-            state = await self._checkpoint_step(
-                build_id, state, "resolve_problems",
-                self._resolve_problems
-            )
-        
-        # Step 9: Run tests if requested
+            ordered.append("resolve")
         if run_tests:
-            state = await self._checkpoint_step(
-                build_id, state, "run_tests",
-                self._run_tests
-            )
-        
+            ordered.append("test")
+
+        for step in ordered:
+            # Execute only if in supervisor plan
+            if any(p.get("step") in (step, step.replace("_code", "")) for p in plan):
+                # Conditional routing gate
+                if not self.supervisor.should_execute(step, state, flags):
+                    continue
+                # HITL checkpoint (log only; auto-continue)
+                if self.supervisor.requires_hitl(step, state):
+                    self._log(state, "info", f"HITL checkpoint for {step}: continuing (auto-approve)")
+                # Normalize names to our internal step labels
+                label = step if step not in ("integrate", "validate", "resolve", "test") else (
+                    "integrate_code" if step == "integrate" else
+                    "validate_build" if step == "validate" else
+                    "resolve_problems" if step == "resolve" else
+                    "run_tests"
+                )
+                func = step_funcs[step]
+                state = await self._checkpoint_step(build_id, state, label, func)
+                # Mark completed in blackboard
+                try:
+                    self.supervisor.mark_completed(step)
+                except Exception:
+                    pass
+
+        # Automatic repair loop: re-validate and attempt fixes if still failing
+        state = await self._auto_repair_until_valid(build_id, state, flags, max_attempts=2)
+
         return state
     
     async def _checkpoint_step(
@@ -429,6 +469,11 @@ class EnhancedAppBuilderWorkflow:
         """Execute step with state checkpointing"""
         state["current_step"] = step_name
         self._log(state, "info", f"Starting step: {step_name}")
+        try:
+            self.storage.add_log(build_id, "info", f"Starting step: {step_name}")
+            self.storage.save_build(build_id, self._build_record(build_id, state))
+        except Exception:
+            pass
         self._emit_activity(build_id, "workflow", step_name, f"start:{step_name}", "info", {})
         
         # Save state before step
@@ -447,6 +492,11 @@ class EnhancedAppBuilderWorkflow:
             step_duration = time.time() - step_start
             self.metrics.record_duration(f"workflow.step.{step_name}", step_duration)
             self._log(state, "success", f"Completed step: {step_name} ({step_duration:.2f}s)")
+            try:
+                self.storage.add_log(build_id, "success", f"Completed step: {step_name} ({round(step_duration,2)}s)")
+                self.storage.save_build(build_id, self._build_record(build_id, state))
+            except Exception:
+                pass
             self._emit_activity(build_id, "workflow", step_name, f"complete:{step_name}", "success", {"duration": round(step_duration, 2)})
             
         except Exception as e:
@@ -457,6 +507,11 @@ class EnhancedAppBuilderWorkflow:
             error_msg = f"Step {step_name} failed: {str(e)}"
             self._log(state, "error", error_msg)
             state["errors"].append(error_msg)
+            try:
+                self.storage.add_log(build_id, "error", error_msg)
+                self.storage.save_build(build_id, self._build_record(build_id, state))
+            except Exception:
+                pass
             self._emit_activity(build_id, "workflow", step_name, f"error:{step_name}", "error", {"error": str(e)})
             
             # Record in error feedback
@@ -474,6 +529,10 @@ class EnhancedAppBuilderWorkflow:
         finally:
             # Save state after step
             self.state_manager.save_state(build_id, state)
+            try:
+                self.storage.save_build(build_id, self._build_record(build_id, state))
+            except Exception:
+                pass
         
         return state
     
@@ -506,6 +565,16 @@ class EnhancedAppBuilderWorkflow:
             state["entities"],
             state["user_flows"]
         )
+        # Learning-driven recommendations (best-effort, non-fatal)
+        try:
+            engine = get_learning_engine()
+            recs = engine.get_build_recommendations(state.get("brief", ""), state.get("requirements", []))
+            if recs:
+                specs["learning_recommendations"] = recs
+                if recs.get("best_practices"):
+                    specs["best_practices"] = recs.get("best_practices")
+        except Exception:
+            pass
         # Thread user preferences into specs if provided
         pref_be = (state.get("preferred_backend") or "").strip()
         pref_fe = (state.get("preferred_frontend") or "").strip()
@@ -614,6 +683,48 @@ class EnhancedAppBuilderWorkflow:
             "validation_results": validation_results,
             "progress": 90
         }
+
+    async def _preflight_check(self, state: dict) -> dict:
+        self._update_progress(state, 82)
+        validator = PreflightValidator()
+        results = await validator.validate(state["source_path"])
+        state.setdefault("preflight_results", {})
+        state["preflight_results"]["initial"] = results
+        if results.get("overall") == "failed":
+            ctx = ExecutionContext(
+                build_id=state["build_id"],
+                request_data={"project_path": state["source_path"]},
+                shared_state=state
+            )
+            dep_result = await self.dependency_agent.execute_safe(ctx)
+            state["preflight_results"]["dependency_fixes"] = dep_result.to_dict()
+            results2 = await validator.validate(state["source_path"])
+            state["preflight_results"]["after_fixes"] = results2
+            self.metrics.increment_counter("preflight.issues", len(results.get("issues", [])))
+        else:
+            self.metrics.increment_counter("preflight.passed")
+        return {"progress": 84}
+
+    async def _monitor_feedback(self, state: dict) -> dict:
+        """Pull monitoring signals and attach to state (stub integration)."""
+        # Place after validation; lightweight progress bump
+        self._update_progress(state, max(90, state.get("progress", 0)))
+        ctx = ExecutionContext(
+            build_id=state["build_id"],
+            request_data={"project_path": state.get("source_path", ""), "mode": "pull-events"},
+            shared_state=state,
+        )
+        mon_result = await self.monitoring_agent.execute_safe(ctx)
+        output = mon_result.to_dict()
+        events = (output.get("output") or {}).get("events", [])
+        state.setdefault("monitoring", {})
+        state["monitoring"]["events"] = events
+        # Metric
+        try:
+            self.metrics.increment_counter("monitoring.events", len(events))
+        except Exception:
+            pass
+        return {"progress": max(91, state.get("progress", 0))}
     
     async def _resolve_problems(self, state: dict) -> dict:
         """Auto-resolve problems with error feedback"""
@@ -675,14 +786,23 @@ class EnhancedAppBuilderWorkflow:
         """Run tests"""
         self._update_progress(state, 97)
         
-        test_results = await self.tester_agent.run_tests(
-            app_path=state["source_path"],
-            test_type="all",
-            generate_missing=True
+        # Use consolidated QualityAgent
+        ctx = ExecutionContext(
+            build_id=state["build_id"],
+            request_data={
+                "project_path": state["source_path"],
+                "entities": state.get("entities", []),
+                "backend_framework": (state.get("preferred_backend") or "fastapi"),
+                "frontend_framework": (state.get("preferred_frontend") or "react-vite"),
+            },
+            shared_state=state,
         )
+        qa_result = await self.quality_agent.execute_safe(ctx)
+        output = qa_result.to_dict()
+        report = (output.get("output") or {}).get("test_report", {})
+        summary = report.get("summary", {})
         
         # Update metrics
-        summary = test_results.get("summary", {})
         self.metrics.increment_counter("tester.runs.total")
         self.metrics.increment_counter("tester.tests.passed", summary.get("passed", 0))
         self.metrics.increment_counter("tester.tests.failed", summary.get("failed", 0))
@@ -691,9 +811,31 @@ class EnhancedAppBuilderWorkflow:
             f"Tests: {summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed")
         
         return {
-            "test_results": test_results,
+            "quality_results": output,
+            "test_results": report,
             "progress": 99
         }
+
+    async def _auto_repair_until_valid(self, build_id: str, state: dict, flags: dict, max_attempts: int = 2) -> dict:
+        """Iteratively validate -> preflight(dep fixes) -> resolve until validation passes or attempts exhausted."""
+        try:
+            attempts = max(0, int(max_attempts))
+        except Exception:
+            attempts = 2
+        for i in range(attempts):
+            # Validate
+            state = await self._checkpoint_step(build_id, state, "validate_build", self._validate_build_comprehensive)
+            status = (state.get("validation_results", {}) or {}).get("overall_status", "unknown")
+            if status != "failed":
+                break
+            # Preflight + dependency fixes
+            state = await self._checkpoint_step(build_id, state, "preflight", self._preflight_check)
+            # Resolve problems if allowed
+            if self.supervisor.should_execute("resolve", state, flags):
+                if self.supervisor.requires_hitl("resolve", state):
+                    self._log(state, "info", "HITL checkpoint for resolve: continuing (auto-approve)")
+                state = await self._checkpoint_step(build_id, state, "resolve_problems", self._resolve_problems)
+        return state
     
     def _create_initial_state(
         self,
@@ -753,6 +895,52 @@ class EnhancedAppBuilderWorkflow:
             "message": message,
             "timestamp": datetime.utcnow().isoformat() + "Z"
         })
+
+    def _build_record(self, build_id: str, state: dict) -> dict:
+        """Normalize state to storage build record"""
+        try:
+            return {
+                "build_id": build_id,
+                "project_name": state.get("project_name", ""),
+                "brief": state.get("brief", ""),
+                "build_status": state.get("build_status", "building"),
+                "progress": state.get("progress", 0),
+                "current_step": state.get("current_step", ""),
+                "app_url": state.get("app_url", ""),
+                "source_path": state.get("source_path", ""),
+                "build_data": state,
+            }
+        except Exception:
+            return {"build_id": build_id, "project_name": state.get("project_name", ""), "build_status": state.get("build_status", "building"), "progress": state.get("progress", 0), "current_step": state.get("current_step", "")}
+
+    def _compute_metrics(self, state: dict, duration: float) -> dict:
+        """Compute lightweight metrics for storage"""
+        try:
+            entity_count = len(state.get("entities", []) or [])
+            file_count = 0
+            try:
+                file_count += len((state.get("backend_code") or {}).keys())
+            except Exception:
+                pass
+            try:
+                file_count += len((state.get("frontend_code") or {}).keys())
+            except Exception:
+                pass
+            validation = state.get("validation_results", {}) or {}
+            val_score = validation.get("score", 0)
+            coverage = 0
+            tr = state.get("test_results", {}) or {}
+            summary = tr.get("summary", {}) if isinstance(tr, dict) else {}
+            coverage = summary.get("coverage", 0) if isinstance(summary, dict) else 0
+            return {
+                "duration_seconds": float(duration or 0),
+                "entity_count": int(entity_count or 0),
+                "file_count": int(file_count or 0),
+                "validation_score": int(val_score or 0),
+                "test_coverage": int(coverage or 0),
+            }
+        except Exception:
+            return {"duration_seconds": float(duration or 0)}
 
     def _emit_activity(self, build_id: str, agent: str, stage: str, message: str, level: str = "info", metadata: dict | None = None):
         evt = {

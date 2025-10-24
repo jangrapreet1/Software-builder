@@ -9,6 +9,8 @@ from langchain.schema import HumanMessage, SystemMessage
 
 from config.settings import Settings
 from .templates.backend_templates import BackendTemplates
+from services.retry_utils import call_llm_with_retry
+from services.framework_registry import get_framework_manifest
 
 
 class BackendAgent:
@@ -44,6 +46,19 @@ class BackendAgent:
             "alembic": self._generate_alembic_config()
         }
         
+        # Enforce FastAPI requirements manifest
+        try:
+            manifest = get_framework_manifest("fastapi") or {}
+            req_text = code.get("requirements") or ""
+            existing = {line.strip().split("[")[0].split("=")[0] for line in req_text.splitlines() if line.strip() and not line.strip().startswith("#")}
+            required = manifest.get("required_packages", [])
+            missing = [p for p in required if p not in existing]
+            if missing:
+                additions = "\n".join(missing)
+                code["requirements"] = (req_text.rstrip() + "\n" + additions + "\n") if req_text else additions + "\n"
+        except Exception:
+            pass
+
         # NEW: Validate generated code quality
         validation = await self._validate_code_quality(code)
         
@@ -76,7 +91,7 @@ Use modern FastAPI patterns and best practices."""
             HumanMessage(content=f"Specifications:\n{json.dumps(specs, indent=2)}\n\nGenerate main.py")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_main_template()
     
     async def _generate_models(self, entities: list[dict]) -> str:
@@ -97,7 +112,7 @@ Use SQLAlchemy 2.0 style with type annotations."""
             HumanMessage(content=f"Entities:\n{json.dumps(entities, indent=2)}\n\nGenerate models.py")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_models_template(entities)
     
     def _generate_database_config(self) -> str:
@@ -121,7 +136,7 @@ Use Pydantic v2 with proper validation."""
             HumanMessage(content=f"Entities:\n{json.dumps(entities, indent=2)}\n\nGenerate schemas.py")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_schemas_template(entities)
     
     async def _generate_auth(self, auth_specs: dict) -> str:
@@ -142,7 +157,7 @@ Use python-jose for JWT and passlib for hashing."""
             HumanMessage(content=f"Auth Specs:\n{json.dumps(auth_specs, indent=2)}\n\nGenerate auth.py")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_auth_template()
     
     async def _generate_routes(self, tasks: list[dict], entities: list[dict]) -> str:
@@ -170,7 +185,7 @@ Use APIRouter and follow REST conventions."""
             HumanMessage(content=f"Tasks:\n{json.dumps(tasks, indent=2)}\nEntities:\n{json.dumps(entities, indent=2)}\n\nGenerate routes.py")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_routes_template(entities)
     
     def _generate_config(self) -> str:
@@ -198,7 +213,7 @@ Use pytest-asyncio for async tests."""
             HumanMessage(content=f"Entities:\n{json.dumps(entities, indent=2)}\n\nGenerate test_api.py")
         ]
         
-        response = await self.llm.ainvoke(messages)
+        response = await call_llm_with_retry(self.llm, messages)
         return self._extract_code(response.content) or self.templates.get_tests_template()
     
     def _generate_alembic_config(self) -> str:
@@ -308,7 +323,7 @@ Use Alembic op.* methods."""
         ]
         
         try:
-            response = await self.llm.ainvoke(messages)
+            response = await call_llm_with_retry(self.llm, messages)
             return self._extract_code(response.content) or self._get_default_migration(entities)
         except Exception:
             return self._get_default_migration(entities)
