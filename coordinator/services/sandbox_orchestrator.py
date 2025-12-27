@@ -12,6 +12,8 @@ from typing import Dict, Optional, List
 import docker
 from docker.errors import DockerException, NotFound, APIError
 import logging
+import json
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -122,20 +124,37 @@ class SandboxOrchestrator:
             image_name = f"{instance_id}:latest"
             logger.info(f"Building image for {instance_id}...")
             
-            # Detect Dockerfile or use default
-            dockerfile_path = app_path_obj / "Dockerfile"
+            # Determine build context (monorepo-aware)
+            context_dir = app_path_obj
+            if not (app_path_obj / "package.json").exists() and (app_path_obj / "frontend" / "package.json").exists():
+                context_dir = app_path_obj / "frontend"
+            elif not (app_path_obj / "requirements.txt").exists() and (app_path_obj / "backend" / "requirements.txt").exists():
+                context_dir = app_path_obj / "backend"
+
+            # Detect Dockerfile or use default in the context directory
+            dockerfile_path = context_dir / "Dockerfile"
             if not dockerfile_path.exists():
                 # Create a default Dockerfile
-                dockerfile_path = self._generate_dockerfile(app_path_obj, run_command)
+                dockerfile_path = self._generate_dockerfile(context_dir, run_command)
+            dockerfile_name = dockerfile_path.name
+
+            # Detect intended container port by project type for correct mapping
+            if (context_dir / "package.json").exists():
+                container_port = 3000
+            elif (context_dir / "requirements.txt").exists():
+                container_port = 8000
+            else:
+                container_port = 3000
             
             # Build image
             build_log_lines = []
             try:
                 image, build_logs = self.docker_client.images.build(
-                    path=str(app_path_obj),
+                    path=str(context_dir),
                     tag=image_name,
                     rm=True,
                     forcerm=True,
+                    dockerfile=dockerfile_name,
                 )
                 
                 # Capture build logs
@@ -155,26 +174,63 @@ class SandboxOrchestrator:
                 # Capture error details
                 error_msg = str(build_error)
                 logger.error(f"Docker build failed: {error_msg}")
-                
-                # Log the last 20 lines of build output for debugging
-                if build_log_lines:
-                    logger.error("Last build logs:")
-                    for line in build_log_lines[-20:]:
-                        logger.error(f"  {line}")
-                
-                # Create detailed error message
-                detailed_error = f"Docker build failed: {error_msg}"
-                if build_log_lines:
-                    detailed_error += f"\n\nLast build output:\n" + "\n".join(build_log_lines[-10:])
-                
-                raise RuntimeError(detailed_error)
+
+                # Attempt fallback for Node projects: dev server without build
+                node_project = (context_dir / "package.json").exists()
+                if node_project:
+                    try:
+                        logger.info("Falling back to dev-server Dockerfile (no build)...")
+                        dev_dockerfile = context_dir / "Dockerfile.dev.generated"
+                        dev_dockerfile.write_text(
+                            """
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci || npm install
+COPY . .
+EXPOSE 3000
+CMD ["npm", "run", "dev", "--", "--port", "3000", "--host", "0.0.0.0"]
+""".strip()
+                        )
+                        image, build_logs = self.docker_client.images.build(
+                            path=str(context_dir),
+                            tag=image_name,
+                            rm=True,
+                            forcerm=True,
+                            dockerfile=dev_dockerfile.name,
+                        )
+                        build_log_lines.append("[fallback] built dev-server image")
+                        container_port = 3000  # Ensure port aligns with dev server
+                    except DockerException as dev_error:
+                        # Log both errors and raise
+                        err2 = str(dev_error)
+                        logger.error(f"Fallback Docker build (dev server) failed: {err2}")
+                        if build_log_lines:
+                            logger.error("Last build logs:")
+                            for line in build_log_lines[-20:]:
+                                logger.error(f"  {line}")
+                        detailed_error = (
+                            f"Docker build failed: {error_msg}\nFallback (dev) failed: {err2}"
+                        )
+                        raise RuntimeError(detailed_error)
+                else:
+                    # Log the last 20 lines of build output for debugging
+                    if build_log_lines:
+                        logger.error("Last build logs:")
+                        for line in build_log_lines[-20:]:
+                            logger.error(f"  {line}")
+                    # Create detailed error message
+                    detailed_error = f"Docker build failed: {error_msg}"
+                    if build_log_lines:
+                        detailed_error += f"\n\nLast build output:\n" + "\n".join(build_log_lines[-10:])
+                    raise RuntimeError(detailed_error)
             
             # Start container
             container = self.docker_client.containers.run(
                 image_name,
                 name=instance_id,
                 detach=True,
-                ports={f"{port}/tcp": None},  # Random host port
+                ports={f"{container_port}/tcp": None},  # Random host port for detected container port
                 environment=safe_env,
                 network=self.network_name,
                 cpu_quota=int(cpu_limit * 100000),  # CPU limit
@@ -196,8 +252,8 @@ class SandboxOrchestrator:
             container.reload()
             port_bindings = container.attrs["NetworkSettings"]["Ports"]
             host_port = None
-            if f"{port}/tcp" in port_bindings and port_bindings[f"{port}/tcp"]:
-                host_port = port_bindings[f"{port}/tcp"][0]["HostPort"]
+            if f"{container_port}/tcp" in port_bindings and port_bindings[f"{container_port}/tcp"]:
+                host_port = port_bindings[f"{container_port}/tcp"][0]["HostPort"]
             
             # Generate preview URL
             preview_url = f"http://localhost:{host_port}" if host_port else None
@@ -449,19 +505,21 @@ class SandboxOrchestrator:
         """Generate a basic Dockerfile if none exists"""
         # Detect project type
         if (app_path / "package.json").exists():
-            # Node.js project
+            # Node.js (Vite/React) project: build and serve with vite preview
             dockerfile_content = """
 FROM node:18-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --production
+RUN npm ci || npm install
 COPY . .
+RUN npm run build
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["npm", "run", "preview", "--", "--port", "3000", "--host", "0.0.0.0"]
 """
         elif (app_path / "requirements.txt").exists():
             # Python project
             cmd = run_command or "python main.py"
+            cmd_args = shlex.split(cmd)
             dockerfile_content = f"""
 FROM python:3.11-slim
 WORKDIR /app
@@ -469,15 +527,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 8000
-CMD {cmd.split()}
+CMD {json.dumps(cmd_args)}
 """
         else:
-            # Generic
+            # Generic: serve current directory via a simple HTTP server so the preview shows something
             dockerfile_content = """
-FROM alpine:latest
+FROM python:3.11-slim
 WORKDIR /app
 COPY . .
-CMD ["sh", "-c", "echo 'No Dockerfile or run command specified' && sleep 3600"]
+EXPOSE 3000
+CMD ["python", "-m", "http.server", "3000"]
 """
         
         dockerfile_path = app_path / "Dockerfile.generated"

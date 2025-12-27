@@ -80,7 +80,8 @@ htmlcov/
 *.tar.gz
 *.zip
 
-
-
+# Ignore generated templates artifacts under .sb_artifacts/templates
+.sb_artifacts/templates/
+.sb_artifacts/chat_sessions/
 
 certs/

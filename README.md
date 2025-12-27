@@ -2,6 +2,10 @@
 
 An AI-driven development system that transforms short project briefs into working web applications using coordinated AI agents.
 
+> [!CAUTION]
+> **RESTRICTED USE**: This repository is submitted for **interview evaluation purposes only**. Unauthorized copying, commercial use, or deployment of this code without the author's explicit written permission is strictly prohibited.
+
+
 ## Overview
 
 This platform uses:

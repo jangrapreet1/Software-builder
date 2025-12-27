@@ -15,6 +15,7 @@ interface InstanceState {
   instanceId?: string;
   sessionId?: string;
   previewUrl?: string;
+  rawPreviewUrl?: string;
   sessionToken?: string;
   buildId?: string;
   status: 'idle' | 'detected' | 'building' | 'running' | 'error' | 'stopped' | 'resolving' | 'testing';
@@ -156,7 +157,8 @@ const App: React.FC = () => {
         setInstance({
           instanceId: data.instance_id,
           sessionId: data.session_id ?? sessionId,
-          previewUrl: data.preview_url,
+          previewUrl: data.secure_preview_url,
+          rawPreviewUrl: data.preview_url,
           sessionToken: data.session_token,
           status: 'running',
           progress: 100,
@@ -362,6 +364,7 @@ const App: React.FC = () => {
               >
                 Editor
               </button>
+              
             </div>
           </div>
         </div>
@@ -506,6 +509,7 @@ const App: React.FC = () => {
                     <div className="w-full">
                       <LivePreview
                         previewUrl={instance.previewUrl as string}
+                        openUrl={(instance.rawPreviewUrl || instance.previewUrl) as string}
                         sessionToken={instance.sessionToken}
                         instanceId={instance.instanceId as string}
                       />

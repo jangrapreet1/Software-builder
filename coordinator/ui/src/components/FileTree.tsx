@@ -79,6 +79,19 @@ export const FileTree: React.FC<FileTreeProps> = ({ root, onSelectFile }) => {
                 className="text-left w-full hover:bg-blue-50 rounded px-1"
                 onClick={() => onSelectFile(item.path)}
                 title={item.path}
+                draggable
+                onDragStart={(e) => {
+                  const mention = `@${item.path.replace(/\\/g, '/')}`;
+                  e.dataTransfer.setData('text/plain', mention);
+                  e.dataTransfer.effectAllowed = 'copy';
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const mention = `@${item.path.replace(/\\/g, '/')}`;
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(mention).catch(()=>{});
+                  }
+                }}
               >
                 <span className="mr-1">📄</span>
                 {item.name}

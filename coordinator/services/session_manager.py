@@ -72,8 +72,10 @@ class SessionManager:
         session = {
             "session_token": session_token,
             "instance_id": instance_id,
+            # Store target base URL (raw sandbox preview origin)
             "preview_url": preview_url,
-            "secure_preview_url": f"{preview_url}?session={session_token}",
+            # Expose a coordinator-relative bridge URL for clients to load inside HTTPS UI
+            "secure_preview_url": f"/preview/bridge/?session={session_token}",
             "created_at": datetime.utcnow().isoformat() + "Z",
             "expires_at": expires_at.isoformat() + "Z",
             "duration": duration,
@@ -98,6 +100,7 @@ class SessionManager:
         
         return {
             "session_token": session_token,
+            # Return the bridged (coordinator-relative) URL to prevent mixed-content issues
             "preview_url": session["secure_preview_url"],
             "expires_at": session["expires_at"],
             "duration": duration,

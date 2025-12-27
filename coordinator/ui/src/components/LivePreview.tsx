@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 
 interface LivePreviewProps {
   previewUrl: string;
+  openUrl?: string;
   sessionToken?: string;
   instanceId: string;
   useSandbox?: boolean;
@@ -9,24 +10,29 @@ interface LivePreviewProps {
 
 export const LivePreview: React.FC<LivePreviewProps> = ({
   previewUrl,
+  openUrl,
   sessionToken,
   instanceId,
   useSandbox = true
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Build secure URL with session token
-  const secureUrl = sessionToken 
-    ? `${previewUrl}?session=${sessionToken}`
+  // Compute frame URL
+  const alreadyHasSession = /[?&]session=/.test(previewUrl);
+  const isBridge = previewUrl.includes('/preview/bridge');
+  const frameUrl = (sessionToken && !alreadyHasSession && !isBridge)
+    ? `${previewUrl}${previewUrl.includes('?') ? '&' : '?'}session=${sessionToken}`
     : previewUrl;
+  const newTabUrl = openUrl || previewUrl;
 
-  // Determine if we can safely iframe this
-  const canIframe = useSandbox && previewUrl.includes('localhost');
+  // Determine if we can safely iframe this (bridge or same-origin or localhost)
+  const sameOrigin = previewUrl.startsWith('/') || previewUrl.startsWith(window.location.origin);
+  const canIframe = useSandbox && (isBridge || sameOrigin || previewUrl.includes('localhost'));
 
   useEffect(() => {
     // Apply CSP and security attributes
     if (iframeRef.current && canIframe) {
-      iframeRef.current.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+      iframeRef.current.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox');
     }
   }, [canIframe]);
 
@@ -42,7 +48,7 @@ export const LivePreview: React.FC<LivePreviewProps> = ({
           For security reasons, this preview will open in a new tab.
         </p>
         <a
-          href={secureUrl}
+          href={newTabUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition"
@@ -66,7 +72,7 @@ export const LivePreview: React.FC<LivePreviewProps> = ({
         <div className="flex items-center space-x-4">
           <span className="text-xs text-gray-500">Instance: {instanceId}</span>
           <a
-            href={secureUrl}
+            href={newTabUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-blue-600 hover:text-blue-700"
@@ -77,10 +83,10 @@ export const LivePreview: React.FC<LivePreviewProps> = ({
       </div>
       <iframe
         ref={iframeRef}
-        src={secureUrl}
+        src={frameUrl}
         className="w-full h-[600px]"
         title="Application Preview"
-        sandbox="allow-scripts allow-same-origin allow-forms"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox"
       />
     </div>
   );

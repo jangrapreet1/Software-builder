@@ -196,6 +196,8 @@ class EnhancedAppBuilderWorkflow:
             
             # Save final state
             self.state_manager.save_state(build_id, final_state)
+            # Compute duration before persisting metrics
+            build_duration = time.time() - build_start_time
             # Persist final record and metrics
             try:
                 self.storage.save_build(build_id, self._build_record(build_id, final_state))
@@ -204,7 +206,6 @@ class EnhancedAppBuilderWorkflow:
                 pass
             
             # Update metrics
-            build_duration = time.time() - build_start_time
             self.metrics.increment_counter("builds.successful")
             self.metrics.record_duration("builds.duration", build_duration)
             
@@ -236,6 +237,8 @@ class EnhancedAppBuilderWorkflow:
             })
             
             self.state_manager.save_state(build_id, state)
+            # Compute duration before persisting metrics
+            build_duration = time.time() - build_start_time
             try:
                 self.storage.save_build(build_id, self._build_record(build_id, state))
                 self.storage.add_log(build_id, "error", error_msg)
@@ -244,7 +247,6 @@ class EnhancedAppBuilderWorkflow:
                 pass
             
             # Update metrics
-            build_duration = time.time() - build_start_time
             self.metrics.increment_counter("builds.failed")
             self.metrics.record_duration("builds.duration", build_duration)
             
@@ -349,13 +351,13 @@ class EnhancedAppBuilderWorkflow:
             final_state["progress"] = 100
             final_state["current_step"] = "Complete"
             self.state_manager.save_state(build_id, final_state)
+            build_duration = time.time() - build_start_time
             try:
                 self.storage.save_build(build_id, self._build_record(build_id, final_state))
                 self.storage.save_metrics(build_id, self._compute_metrics(final_state, build_duration))
             except Exception:
                 pass
 
-            build_duration = time.time() - build_start_time
             self.metrics.increment_counter("builds.successful")
             self.metrics.record_duration("builds.duration", build_duration)
         except Exception as e:
@@ -370,6 +372,7 @@ class EnhancedAppBuilderWorkflow:
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             })
             self.state_manager.save_state(build_id, state)
+            build_duration = time.time() - build_start_time
             try:
                 self.storage.save_build(build_id, self._build_record(build_id, state))
                 self.storage.add_log(build_id, "error", error_msg)
@@ -377,7 +380,6 @@ class EnhancedAppBuilderWorkflow:
             except Exception:
                 pass
 
-            build_duration = time.time() - build_start_time
             self.metrics.increment_counter("builds.failed")
             self.metrics.record_duration("builds.duration", build_duration)
 

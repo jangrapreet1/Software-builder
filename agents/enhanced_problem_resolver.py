@@ -76,6 +76,70 @@ class EnhancedProblemResolverAgent:
         self.sandbox_orchestrator = sandbox_orchestrator
         self.active_runs: Dict[str, ResolverRun] = {}
         self.run_history: List[ResolverRun] = []
+
+    async def analyze_and_resolve(
+        self,
+        app_path: str,
+        error_logs: Optional[str] = None,
+        context: Optional[Dict] = None,
+        run_mode: RunMode = RunMode.ATTEMPT_FIX,
+        timeout_seconds: int = 180,
+    ) -> Dict:
+        """Convenience API used by CollaborationManager to diagnose and (optionally) fix.
+
+        Starts a resolver run with sensible defaults, waits for completion (up to timeout),
+        and returns a compact summary including run_id and final result.
+        """
+        # Determine context dir and defaults similar to start_resolver_run
+        app_path_obj = Path(app_path)
+        context_dir = app_path_obj
+        if not (app_path_obj / "package.json").exists() and (app_path_obj / "frontend" / "package.json").exists():
+            context_dir = app_path_obj / "frontend"
+        elif not (app_path_obj / "requirements.txt").exists() and (app_path_obj / "backend" / "requirements.txt").exists():
+            context_dir = app_path_obj / "backend"
+
+        commands: Dict[str, List[str]] = {"build": [], "run": [], "test": []}
+        if (context_dir / "package.json").exists():
+            commands["build"] = ["npm", "ci", "&&", "npm", "run", "build"]
+            commands["run"] = ["npm", "run", "preview", "--", "--port", "3000", "--host", "0.0.0.0"]
+        elif (context_dir / "requirements.txt").exists():
+            commands["build"] = ["pip", "install", "-r", "requirements.txt"]
+            commands["run"] = ["python", "main.py"]
+
+        run_id = await self.start_resolver_run(
+            session_id=context.get("session_id", "resolver-session") if context else "resolver-session",
+            app_path=str(context_dir),
+            commands=commands,
+            run_mode=run_mode,
+        )
+
+        # Poll for completion
+        deadline = datetime.utcnow().timestamp() + timeout_seconds
+        status = None
+        result_payload: Optional[Dict] = None
+        while datetime.utcnow().timestamp() < deadline:
+            info = self.get_run_result(run_id)
+            if info and info.get("status") in {"completed", "failed"}:
+                status = info.get("status")
+                result_payload = info.get("result")
+                break
+            await asyncio.sleep(1)
+
+        # Build summary
+        issues_found = 0
+        issues_resolved = 0
+        if result_payload:
+            issues_found = len(result_payload.get("issues", []) or [])
+            repairs = result_payload.get("repairs", []) or []
+            issues_resolved = len([r for r in repairs if r.get("success")])
+
+        return {
+            "run_id": run_id,
+            "status": status or "running",
+            "issues_found": issues_found,
+            "issues_resolved": issues_resolved,
+            "result": result_payload,
+        }
         
     async def start_resolver_run(
         self,
@@ -96,12 +160,33 @@ class EnhancedProblemResolverAgent:
         Returns:
             run_id: Unique identifier for this run
         """
+        # Resolve monorepo context: prefer frontend/backend subdirs when appropriate
+        app_path_obj = Path(app_path)
+        context_dir = app_path_obj
+        if not (app_path_obj / "package.json").exists() and (app_path_obj / "frontend" / "package.json").exists():
+            context_dir = app_path_obj / "frontend"
+        elif not (app_path_obj / "requirements.txt").exists() and (app_path_obj / "backend" / "requirements.txt").exists():
+            context_dir = app_path_obj / "backend"
+
+        # Provide sensible defaults if commands are missing
+        commands = commands or {"build": [], "run": [], "test": []}
+        if not commands.get("build"):
+            if (context_dir / "package.json").exists():
+                commands["build"] = ["npm", "ci", "&&", "npm", "run", "build"]
+            elif (context_dir / "requirements.txt").exists():
+                commands["build"] = ["pip", "install", "-r", "requirements.txt"]
+        if not commands.get("run"):
+            if (context_dir / "package.json").exists():
+                commands["run"] = ["npm", "run", "preview", "--", "--port", "3000", "--host", "0.0.0.0"]
+            elif (context_dir / "requirements.txt").exists():
+                commands["run"] = ["python", "main.py"]
+
         run_id = str(uuid.uuid4())
         
         run = ResolverRun(
             run_id=run_id,
             session_id=session_id,
-            app_path=app_path,
+            app_path=str(context_dir),
             commands=commands,
             run_mode=run_mode
         )
@@ -302,7 +387,7 @@ class EnhancedProblemResolverAgent:
             return ErrorCategory.CONCURRENCY_ASYNC
         elif any(keyword in error_lower for keyword in ["render", "jsx", "component", "react", "vue"]):
             return ErrorCategory.UI_RENDERING
-        elif any(keyword in error_lower for keyword in ["build", "webpack", "vite", "compilation"]):
+        elif any(keyword in error_lower for keyword in ["build", "webpack", "vite", "compilation", "returned a non-zero code: 2"]):
             return ErrorCategory.BUILD_CONFIG
         else:
             return ErrorCategory.RUNTIME
@@ -376,6 +461,70 @@ Provide only the fix suggestion, no explanation."""
                 "suggested_fix": "Run: npm install",
                 "confidence": 0.95
             })
+        
+        # Node/vite ESM config validations
+        try:
+            pkg_path = app_path_obj / "package.json"
+            pkg_type_module = False
+            if pkg_path.exists():
+                pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+                pkg_type_module = (pkg.get("type") == "module")
+
+            # postcss.config.js should be ESM under type=module
+            postcss_path = app_path_obj / "postcss.config.js"
+            if pkg_type_module and postcss_path.exists():
+                content = postcss_path.read_text(encoding="utf-8")
+                if "module.exports" in content:
+                    issues.append({
+                        "id": str(uuid.uuid4()),
+                        "category": ErrorCategory.BUILD_CONFIG.value,
+                        "severity": "medium",
+                        "message": "postcss.config.js uses CommonJS under type=module",
+                        "risk_level": RiskLevel.LOW.value,
+                        "suggested_fix": "Rewrite postcss.config.js to use ESM export default",
+                        "confidence": 0.95,
+                        "kind": "postcss_esm"
+                    })
+
+            # tailwind.config.js should be ESM under type=module
+            tailwind_path = app_path_obj / "tailwind.config.js"
+            if pkg_type_module and tailwind_path.exists():
+                tcontent = tailwind_path.read_text(encoding="utf-8")
+                if "module.exports" in tcontent:
+                    issues.append({
+                        "id": str(uuid.uuid4()),
+                        "category": ErrorCategory.BUILD_CONFIG.value,
+                        "severity": "low",
+                        "message": "tailwind.config.js uses CommonJS under type=module",
+                        "risk_level": RiskLevel.LOW.value,
+                        "suggested_fix": "Rewrite tailwind.config.js to use ESM export default",
+                        "confidence": 0.9,
+                        "kind": "tailwind_esm"
+                    })
+
+            # tsconfig.node.json missing while referenced or typical Vite project
+            tsconfig_path = app_path_obj / "tsconfig.json"
+            ts_node_path = app_path_obj / "tsconfig.node.json"
+            if tsconfig_path.exists() and not ts_node_path.exists():
+                try:
+                    tsconfig = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+                    refs = tsconfig.get("references", [])
+                    ref_names = [r.get("path") for r in refs if isinstance(r, dict)]
+                    if "./tsconfig.node.json" in ref_names or (app_path_obj / "vite.config.ts").exists():
+                        issues.append({
+                            "id": str(uuid.uuid4()),
+                            "category": ErrorCategory.BUILD_CONFIG.value,
+                            "severity": "medium",
+                            "message": "Missing tsconfig.node.json required by Vite/TypeScript setup",
+                            "risk_level": RiskLevel.LOW.value,
+                            "suggested_fix": "Create tsconfig.node.json with moduleResolution 'bundler' and vite/client types",
+                            "confidence": 0.95,
+                            "kind": "tsconfig_node_missing"
+                        })
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         return issues
 
@@ -498,7 +647,8 @@ Provide only the fix suggestion, no explanation."""
     
     async def _fix_config(self, app_path: str, issue: Dict) -> Dict:
         """Fix configuration issues"""
-        if ".env" in issue.get("message", ""):
+        # Create .env from .env.example
+        if ".env" in issue.get("message", "") and "example" in issue.get("message", ""):
             try:
                 env_example = Path(app_path) / ".env.example"
                 env_file = Path(app_path) / ".env"
@@ -509,6 +659,45 @@ Provide only the fix suggestion, no explanation."""
                     return {"success": True, "action": "Created .env from .env.example"}
             except:
                 pass
+        
+        kind = issue.get("kind", "")
+        try:
+            if kind == "postcss_esm":
+                postcss_path = Path(app_path) / "postcss.config.js"
+                if postcss_path.exists():
+                    postcss_path.write_text(
+                        """export default {\n  plugins: {\n    tailwindcss: {},\n    autoprefixer: {},\n  },\n}\n""",
+                        encoding="utf-8",
+                    )
+                    return {"success": True, "action": "Converted postcss.config.js to ESM"}
+            elif kind == "tailwind_esm":
+                tailwind_path = Path(app_path) / "tailwind.config.js"
+                if tailwind_path.exists():
+                    tailwind_path.write_text(
+                        """export default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: {\n    extend: {},\n  },\n  plugins: [],\n}\n""",
+                        encoding="utf-8",
+                    )
+                    return {"success": True, "action": "Converted tailwind.config.js to ESM"}
+            elif kind == "tsconfig_node_missing":
+                ts_node_path = Path(app_path) / "tsconfig.node.json"
+                ts_node_path.write_text(
+                    json.dumps({
+                        "compilerOptions": {
+                            "composite": True,
+                            "skipLibCheck": True,
+                            "module": "ESNext",
+                            "moduleResolution": "bundler",
+                            "resolveJsonModule": True,
+                            "allowSyntheticDefaultImports": True,
+                            "types": ["vite/client"],
+                        },
+                        "include": ["vite.config.ts"],
+                    }, indent=2),
+                    encoding="utf-8",
+                )
+                return {"success": True, "action": "Added tsconfig.node.json"}
+        except Exception as e:
+            return {"success": False, "action": f"Config fix failed: {str(e)}"}
         
         return {"success": False, "action": "No automated fix available"}
     

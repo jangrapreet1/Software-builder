@@ -8,13 +8,23 @@ from pathlib import Path
 from datetime import datetime
 import time
 from typing import Dict, List, Optional
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Response
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, ORJSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 from dotenv import load_dotenv
 from rich.console import Console
+import re
 import subprocess
+import httpx
+from urllib.parse import urljoin, urlencode, urlparse, parse_qsl
+from http.cookies import SimpleCookie
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 # Ensure repo root is at the very front to avoid 'coordinator/services' shadowing top-level 'services'
@@ -47,6 +57,7 @@ from services.agent_collaboration_manager import CollaborationManager, LivePrevi
 from services.metrics_collector import get_metrics_collector
 from services.activity_notifier import subscribe as activity_subscribe, unsubscribe as activity_unsubscribe
 from services.error_handler_middleware import add_error_handling
+from api.chat_endpoints import router as chat_router, initialize_chat_metrics
 from agents.problem_resolver_agent import ProblemResolverAgent
 from agents.enhanced_problem_resolver import EnhancedProblemResolverAgent, RunMode
 from agents.tester_agent import TesterAgent
@@ -72,16 +83,8 @@ load_dotenv()
 app = FastAPI(
     title="Autonomous App Builder - Coordinator",
     description="AI-driven platform for building web applications from project briefs",
-    version="1.0.0"
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    version="1.0.0",
+    default_response_class=ORJSONResponse,
 )
 
 # Add enhanced error handling middleware
@@ -97,9 +100,26 @@ if ENHANCED_FEATURES_AVAILABLE:
         console.print(f"[yellow]⚠ Enhanced API registration failed: {e}[/yellow]")
 
 
+# Register Chat API router
+try:
+    app.include_router(chat_router)
+    console.print("[green]✓ Chat API endpoints registered[/green]")
+except Exception as e:
+    console.print(f"[yellow]⚠ Chat API registration failed: {e}[/yellow]")
+
 
 # Load settings
 settings = Settings()
+
+# Add CORS middleware using settings
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
@@ -108,6 +128,53 @@ build_registry = BuildRegistry(REPO_ROOT)
 build_registry.bootstrap_from_generated(GENERATED_DIR)
 run_audit_logger = RunAuditLogger(str(REPO_ROOT / ".sb_artifacts"))
 metrics_collector = get_metrics_collector()
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Prometheus metrics isolated to a custom registry to avoid duplicate registration on reload
+prom_registry = CollectorRegistry()
+app.state.prom_registry = prom_registry
+
+REQUESTS = Counter(
+    "http_requests_total",
+    "total http requests",
+    ["method", "endpoint", "status_code"],
+    registry=prom_registry,
+)
+LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "request duration seconds",
+    ["method", "endpoint", "status_code"],
+    buckets=(0.05, 0.1, 0.2, 0.5, 1, 2, 5),
+    registry=prom_registry,
+)
+BUILDS_STARTED = Counter("appbuild_builds_started_total", "builds started", registry=prom_registry)
+BUILDS_SUCCESS = Counter("appbuild_builds_success_total", "builds successful", registry=prom_registry)
+BUILDS_FAILED = Counter("appbuild_builds_failed_total", "builds failed", registry=prom_registry)
+BUILDS_ACTIVE = Gauge("appbuild_builds_active", "active builds", registry=prom_registry)
+try:
+    initialize_chat_metrics(app.state.prom_registry)
+    console.print("[green]✓ Chat metrics initialized[/green]")
+except Exception as e:
+    console.print(f"[yellow]⚠ Chat metrics initialization failed: {e}[/yellow]")
+
+@app.middleware("http")
+async def _metrics_mw(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    elapsed = time.time() - start
+    method = request.method
+    endpoint = request.url.path
+    status = str(response.status_code)
+    REQUESTS.labels(method=method, endpoint=endpoint, status_code=status).inc()
+    LATENCY.labels(method=method, endpoint=endpoint, status_code=status).observe(elapsed)
+    return response
+
+# Track last preview token observed per client IP to assist alias routes when
+# Referer and cookies are unavailable in some browsers or CSP settings.
+LAST_PREVIEW_TOKEN_BY_IP: Dict[str, str] = {}
 
 # Launch retry governance (per session_id)
 LAUNCH_RETRY_STATE: Dict[str, Dict] = {}
@@ -121,12 +188,17 @@ try:
     )
     session_manager = SessionManager(default_session_duration=3600)
     permission_manager = PermissionManager(default_expiry=3600)
+    # Expose managers on app state for other routers/modules
+    app.state.session_manager = session_manager
+    app.state.permission_manager = permission_manager
     console.print("[green]✓ Sandbox orchestrator initialized[/green]")
 except Exception as e:
     console.print(f"[yellow]⚠ Sandbox orchestrator unavailable: {e}[/yellow]")
     sandbox_orchestrator = None
     session_manager = None
     permission_manager = None
+    app.state.session_manager = None
+    app.state.permission_manager = None
 
 # Initialize Phase 2 agents and managers
 try:
@@ -157,8 +229,9 @@ class ProblemResolverStartRequest(BaseModel):
     run_mode: str | None = "diagnose-only"
 
 
+@limiter.limit(settings.rate_limit_problem_resolver)
 @app.post("/api/agent/problem-resolver")
-async def start_problem_resolver(req: ProblemResolverStartRequest):
+async def start_problem_resolver(req: ProblemResolverStartRequest, request: Request):
     if not enhanced_resolver:
         raise HTTPException(status_code=503, detail="Enhanced resolver not available")
     try:
@@ -173,6 +246,21 @@ async def start_problem_resolver(req: ProblemResolverStartRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.websocket("/ws/build/{build_id}")
+async def build_websocket(websocket: WebSocket, build_id: str):
+    await websocket.accept()
+    try:
+        while True:
+            active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
+            status = await active_workflow.get_build_status(build_id)
+            if status:
+                await websocket.send_json(status)
+            if status and status.get("status") in ["success", "failed"]:
+                break
+            await asyncio.sleep(2)
+    except WebSocketDisconnect:
+        pass
 
 @app.get("/api/agent/problem-resolver/{run_id}/result")
 async def get_problem_resolver_result(run_id: str):
@@ -415,8 +503,14 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(app.state.prom_registry), media_type=CONTENT_TYPE_LATEST)
+
+
+@limiter.limit(settings.rate_limit_build)
 @app.post("/api/build", response_model=BuildResponse)
-async def build_app(brief: ProjectBrief):
+async def build_app(brief: ProjectBrief, request: Request):
     """
     Build an application from a project brief
     
@@ -429,6 +523,8 @@ async def build_app(brief: ProjectBrief):
     """
     try:
         console.print(f"\n[bold green]Received build request:[/bold green] {brief.description}")
+        BUILDS_STARTED.inc()
+        BUILDS_ACTIVE.inc()
         
         # Select active workflow. Tests set USE_FAKE_WORKFLOW=1 and patch `workflow`.
         active_workflow = (
@@ -453,7 +549,7 @@ async def build_app(brief: ProjectBrief):
                 requirements=brief.requirements,
             )
         
-        return BuildResponse(
+        resp = BuildResponse(
             status=result["status"],
             build_id=result["build_id"],
             message=result["message"],
@@ -461,16 +557,30 @@ async def build_app(brief: ProjectBrief):
             source_path=result.get("source_path"),
             logs=result.get("logs", [])
         )
+        try:
+            if (result.get("status") or "").lower() == "success":
+                BUILDS_SUCCESS.inc()
+        finally:
+            BUILDS_ACTIVE.dec()
+        return resp
         
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        try:
+            BUILDS_FAILED.inc()
+        finally:
+            try:
+                BUILDS_ACTIVE.dec()
+            except Exception:
+                pass
         console.print(f"[bold red]Error building app:[/bold red] {str(e)}")
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@limiter.limit(settings.rate_limit_read)
 @app.get("/api/build/{build_id}/status", response_model=BuildStatus)
-async def get_build_status(build_id: str):
+async def get_build_status(build_id: str, request: Request):
     """Get the status of a build"""
     try:
         active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
@@ -487,8 +597,9 @@ async def get_build_status(build_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@limiter.limit(settings.rate_limit_read)
 @app.get("/api/builds")
-async def list_builds():
+async def list_builds(request: Request):
     """List all builds"""
     try:
         active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
@@ -498,8 +609,9 @@ async def list_builds():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@limiter.limit(settings.rate_limit_read)
 @app.get("/api/generated/projects")
-async def get_generated_projects():
+async def get_generated_projects(request: Request):
     """List projects available in the generated directory"""
     try:
         projects = []
@@ -521,8 +633,9 @@ async def get_generated_projects():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@limiter.limit(settings.rate_limit_write)
 @app.delete("/api/build/{build_id}")
-async def delete_build(build_id: str):
+async def delete_build(build_id: str, request: Request):
     """Delete a build and its artifacts"""
     try:
         active_workflow = workflow if USE_FAKE_WORKFLOW else (enhanced_workflow if enhanced_workflow else workflow)
@@ -536,14 +649,15 @@ async def delete_build(build_id: str):
 # PHASE 1: SANDBOX ORCHESTRATION ENDPOINTS
 # ============================================================================
 
+@limiter.limit(settings.rate_limit_detect)
 @app.post("/api/repo/detect")
-async def detect_repository(request: DetectionRequest):
+async def detect_repository(payload: DetectionRequest, request: Request):
     """
     Auto-detect repository configuration, languages, frameworks, and commands.
     Returns a detection report for user approval. Persists report to .sb_artifacts/.
     """
     try:
-        repo_path = Path(request.repo_path)
+        repo_path = Path(payload.repo_path)
 
         if not repo_path.is_absolute():
             repo_path = (REPO_ROOT / repo_path).resolve()
@@ -603,8 +717,9 @@ async def get_latest_detection(repo_path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@limiter.limit(settings.rate_limit_write)
 @app.post("/api/session/permissions")
-async def grant_permissions(request: PermissionRequest):
+async def grant_permissions(payload: PermissionRequest, request: Request):
     """
     Grant permissions for a session to perform actions.
     User must explicitly approve commands before they can be executed.
@@ -614,22 +729,22 @@ async def grant_permissions(request: PermissionRequest):
     
     try:
         permission = permission_manager.grant_permission(
-            session_id=request.session_id,
-            actions=request.actions,
-            commands=request.commands,
-            duration=request.duration
+            session_id=payload.session_id,
+            actions=payload.actions,
+            commands=payload.commands,
+            duration=payload.duration,
         )
         
         # Audit log
         audit_logger.log_event(
             event_type=AuditEventType.COMMAND_APPROVED,
             details={
-                "session_id": request.session_id,
-                "actions": request.actions,
-                "commands": request.commands,
-                "duration": request.duration
+                "session_id": payload.session_id,
+                "actions": payload.actions,
+                "commands": payload.commands,
+                "duration": payload.duration,
             },
-            user=request.session_id,
+            user=payload.session_id,
             success=True
         )
         
@@ -644,8 +759,9 @@ async def grant_permissions(request: PermissionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@limiter.limit(settings.rate_limit_preview)
 @app.post("/api/app/preview")
-async def preview_app(request: PreviewRequest):
+async def preview_app(preview: PreviewRequest, request: Request):
     """
     Prepare and return a secure preview URL with session token and expiry.
     This is a lightweight endpoint that creates a session without launching a container.
@@ -654,26 +770,33 @@ async def preview_app(request: PreviewRequest):
         raise HTTPException(status_code=503, detail="Session manager not available")
     
     try:
-        app_path = Path(request.app_path).resolve()
+        app_path = Path(preview.app_path).resolve()
         
         if not app_path.exists():
-            raise HTTPException(status_code=404, detail=f"Application path not found: {request.app_path}")
+            raise HTTPException(status_code=404, detail=f"Application path not found: {preview.app_path}")
         
         # For preview, we assume the app is already running or will be launched separately
         # Generate a preview URL placeholder
-        preview_url = f"http://localhost:{request.port}"
+        preview_url = f"http://localhost:{preview.port}"
         
         # Create session
         session = session_manager.create_session(
             instance_id=f"preview-{app_path.name}",
             preview_url=preview_url,
-            duration=request.session_duration,
+            duration=preview.session_duration,
             metadata={"app_path": str(app_path)}
         )
         
+        base = str(request.base_url).rstrip("/")
+        secure_url = f"{base}/preview/bridge/?session={session['session_token']}"
         return {
             "status": "success",
-            "preview_url": session["preview_url"],
+            # Raw sandbox URL for opening in a new tab (button)
+            "preview_url": preview_url,
+            # Bridged URL for embedding in Live Preview iframe (HTTPS-safe)
+            "secure_preview_url": secure_url,
+            # Provide raw URL explicitly too
+            "raw_preview_url": preview_url,
             "session_token": session["session_token"],
             "expires_at": session["expires_at"],
             "message": "Preview session created. Launch instance to start the application."
@@ -684,8 +807,469 @@ async def preview_app(request: PreviewRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Live Preview Bridge (HTTPS-friendly proxy over the coordinator)
+# ---------------------------------------------------------------------------
+@app.api_route("/preview/bridge", methods=["GET"])
+@app.api_route("/preview/bridge/{full_path:path}", methods=["GET"])
+async def preview_bridge(request: Request, full_path: str = ""):
+    """Proxy sandbox preview traffic via coordinator to avoid mixed content.
+
+    Clients must provide ?session=<token>. We validate the session and forward the
+    request to the underlying sandbox preview URL, preserving path and query.
+    We also forward the session token to the target as a query parameter.
+    """
+    # Validate session
+    token = request.query_params.get("session")
+    if not token:
+        # Try to extract from Referer for subresource requests
+        referer = request.headers.get("referer") or request.headers.get("Referer")
+        if referer:
+            try:
+                ref_q = dict(parse_qsl(urlparse(referer).query))
+                token = ref_q.get("session")
+            except Exception:
+                token = None
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing session token")
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager not available")
+
+    try:
+        sess = session_manager.validate_session(token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    target_base = sess.get("preview_url")
+    if not target_base:
+        raise HTTPException(status_code=500, detail="Session missing preview target")
+
+    try:
+        parsed_base = urlparse(target_base)
+        host = parsed_base.hostname or ""
+        if host not in (settings.preview_allowed_hosts or []):
+            raise HTTPException(status_code=403, detail="Preview host not allowed")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid preview target URL")
+
+    # Build target URL preserving path and query; ensure session is forwarded
+    incoming_q = dict(request.query_params)
+    # Remove bridge-level session to avoid duplication
+    incoming_q.pop("session", None)
+    # Forward token to target
+    incoming_q["session"] = token
+
+    # Construct path and query
+    # Ensure target_base has no trailing slash issues
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, full_path)
+    if incoming_q:
+        target_url = f"{target_url}?{urlencode(incoming_q, doseq=True)}"
+
+    # Record token by client IP for alias-route fallback
+    try:
+        if request.client and request.client.host:
+            LAST_PREVIEW_TOKEN_BY_IP[request.client.host] = token
+    except Exception:
+        pass
+
+    # Forward request to target
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            # Copy selected headers, avoid accept-encoding to prevent gzip transfer issues
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent")}
+            resp = await client.get(target_url, headers=headers)
+
+            # Stream back response with original content-type
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                # Strip headers that block iframe embedding under the coordinator origin
+                "x-frame-options",
+                "content-security-policy",
+                # COOP/COEP/CORP can break embedding and module loading inside iframe
+                "cross-origin-opener-policy",
+                "cross-origin-embedder-policy",
+                "cross-origin-resource-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+
+            content_type = resp.headers.get("content-type", "")
+            # For HTML, rewrite absolute asset paths (src/href="/...") to go through bridge prefix
+            if "text/html" in content_type.lower():
+                try:
+                    html = resp.text
+                    # 0) Remove CSP meta tags that can block embedding
+                    html = re.sub(r'<meta[^>]+http-equiv\s*=\s*[\"\']Content-Security-Policy[\"\'][^>]*>', '', html, flags=re.IGNORECASE)
+                    # 1) Prefix absolute paths to route via bridge
+                    html = re.sub(r'((?:src|href)\s*=\s*[\"\'])/(?!/)', '\\1/preview/bridge/', html)
+                    # 1b) Rewrite absolute localhost URLs (http://localhost:PORT/...) to bridge
+                    html = re.sub(
+                        r'((?:src|href)\s*=\s*[\"\'])https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?/',
+                        r'\1/preview/bridge/',
+                        html,
+                        flags=re.IGNORECASE,
+                    )
+                    # 2) Ensure navigations and subresource loads carry session token, so page and assets work
+                    def _add_session_param(url: str) -> str:
+                        return url + ("&session=" + token if "?" in url else "?session=" + token)
+                    # Add to href
+                    html = re.sub(r'(href\s*=\s*[\"\']/preview/bridge/[^\"\']*)([\"\"])', lambda m: _add_session_param(m.group(1)) + m.group(2), html)
+                    # Add to src
+                    html = re.sub(r'(src\s*=\s*[\"\']/preview/bridge/[^\"\']*)(([\"\"]))', lambda m: _add_session_param(m.group(1)) + m.group(2), html)
+                    # 2b) Make sure the Vite HMR client carries the session via the bridge
+                    html = html.replace('src="/@vite/client"', f'src="/preview/bridge/@vite/client?session={token}"')
+                    html = html.replace("src='/@vite/client'", f"src='/preview/bridge/@vite/client?session={token}'")
+                    html = html.replace('href="/@vite/client"', f'href="/preview/bridge/@vite/client?session={token}"')
+                    html = html.replace("href='/@vite/client'", f"href='/preview/bridge/@vite/client?session={token}'")
+                    # Set a cookie so alias routes can retrieve session when Referer is absent.
+                    # Use SameSite=None so it is sent from the preview iframe (third-party to the UI dev host).
+                    resp_headers = dict(response_headers)
+                    cookie = f"preview_session={token}; Path=/; SameSite=None; HttpOnly"
+                    if request.url.scheme == "https":
+                        cookie += "; Secure"
+                    resp_headers["set-cookie"] = cookie
+                    # Record token by client IP as an additional fallback
+                    try:
+                        if request.client and request.client.host:
+                            LAST_PREVIEW_TOKEN_BY_IP[request.client.host] = token
+                    except Exception:
+                        pass
+                    return Response(content=html, media_type="text/html", status_code=resp.status_code, headers=resp_headers)
+                except Exception:
+                    # Fallback to raw content
+                    pass
+            elif "text/css" in content_type.lower():
+                try:
+                    css = resp.text
+                    # Rewrite url(/...) -> url(/preview/bridge/...?...session=token)
+                    def _rewrite_css_url(m):
+                        before = m.group(1)  # url(
+                        path = m.group(2)    # leading '/...'
+                        rest = m.group(3)    # closing ) or quote+)
+                        # Prefix bridge and add session token
+                        new = "/preview/bridge" + path
+                        new = new + ("&session=" + token if "?" in new else "?session=" + token)
+                        return f"{before}{new}{rest}"
+                    css = re.sub(r"(url\(\s*[\'\"]?)(/(?!/)[^\)\'\"]*)([\'\"]?\s*\))", _rewrite_css_url, css)
+                    return Response(content=css, media_type="text/css", status_code=resp.status_code, headers=dict(response_headers))
+                except Exception:
+                    pass
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Alias routes for common dev-server prefixes to keep requests inside bridge
+# These rely on the iframe session. Extract token from query, cookies, or Referer.
+
+def _get_preview_token(request: Request):
+    # 1) Direct query param on the request
+    token = request.query_params.get("session")
+    if token:
+        return token
+    # 2) Cookie set by HTML bridge response
+    cookie_header = request.headers.get("cookie") or request.headers.get("Cookie")
+    if cookie_header:
+        try:
+            c = SimpleCookie()
+            c.load(cookie_header)
+            if "preview_session" in c:
+                return c["preview_session"].value
+        except Exception:
+            pass
+    # 3) Referer query (for subresource loads attaching the bridge page URL)
+    referer = request.headers.get("referer") or request.headers.get("Referer")
+    if referer:
+        try:
+            return dict(parse_qsl(urlparse(referer).query)).get("session")
+        except Exception:
+            return None
+    # 4) Fallback to last token observed for this client IP
+    try:
+        if request.client and request.client.host:
+            return LAST_PREVIEW_TOKEN_BY_IP.get(request.client.host)
+    except Exception:
+        pass
+    return None
+@app.get("/@{full_path:path}")
+async def preview_bridge_at_prefix(request: Request, full_path: str):
+    token = _get_preview_token(request)
+    target_base = None
+    if token and session_manager:
+        try:
+            sess = session_manager.validate_session(token)
+            target_base = sess.get("preview_url")
+        except ValueError:
+            target_base = None
+    if not target_base:
+        try:
+            client_ip = request.client.host if request.client else None
+        except Exception:
+            client_ip = None
+        if client_ip:
+            ip_token = LAST_PREVIEW_TOKEN_BY_IP.get(client_ip)
+            if ip_token and session_manager:
+                try:
+                    sess2 = session_manager.validate_session(ip_token)
+                    target_base = sess2.get("preview_url")
+                except ValueError:
+                    target_base = None
+    if not target_base:
+        raise HTTPException(status_code=400, detail="Missing preview target")
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, "@" + full_path)
+    # Preserve original query string (e.g., ?v=, ?import)
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent")}
+            resp = await client.get(target_url, headers=headers)
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                "x-frame-options",
+                "content-security-policy",
+                "cross-origin-opener-policy",
+                "cross-origin-embedder-policy",
+                "cross-origin-resource-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
+
+@app.get("/assets/{full_path:path}")
+async def preview_bridge_assets(request: Request, full_path: str):
+    token = _get_preview_token(request)
+    target_base = None
+    if token and session_manager:
+        try:
+            sess = session_manager.validate_session(token)
+            target_base = sess.get("preview_url")
+        except ValueError:
+            target_base = None
+    if not target_base:
+        try:
+            client_ip = request.client.host if request.client else None
+        except Exception:
+            client_ip = None
+        if client_ip:
+            target_base = LAST_PREVIEW_TARGET_BY_IP.get(client_ip)
+    if not target_base:
+        raise HTTPException(status_code=400, detail="Missing preview target")
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, "assets/" + full_path)
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent")}
+            resp = await client.get(target_url, headers=headers)
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                "x-frame-options",
+                "content-security-policy",
+                "cross-origin-opener-policy",
+                "cross-origin-embedder-policy",
+                "cross-origin-resource-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
+
+@app.get("/src/{full_path:path}")
+async def preview_bridge_src(request: Request, full_path: str):
+    token = _get_preview_token(request)
+    target_base = None
+    if token and session_manager:
+        try:
+            sess = session_manager.validate_session(token)
+            target_base = sess.get("preview_url")
+        except ValueError:
+            target_base = None
+    if not target_base:
+        try:
+            client_ip = request.client.host if request.client else None
+        except Exception:
+            client_ip = None
+        if client_ip:
+            target_base = LAST_PREVIEW_TARGET_BY_IP.get(client_ip)
+    if not target_base:
+        raise HTTPException(status_code=400, detail="Missing preview target")
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, "src/" + full_path)
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent")}
+            resp = await client.get(target_url, headers=headers)
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                "x-frame-options",
+                "content-security-policy",
+                "cross-origin-opener-policy",
+                "cross-origin-embedder-policy",
+                "cross-origin-resource-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
+
+@app.get("/node_modules/{full_path:path}")
+async def preview_bridge_node_modules(request: Request, full_path: str):
+    token = _get_preview_token(request)
+    target_base = None
+    if token and session_manager:
+        try:
+            sess = session_manager.validate_session(token)
+            target_base = sess.get("preview_url")
+        except ValueError:
+            target_base = None
+    if not target_base:
+        try:
+            client_ip = request.client.host if request.client else None
+        except Exception:
+            client_ip = None
+        if client_ip:
+            target_base = LAST_PREVIEW_TARGET_BY_IP.get(client_ip)
+    if not target_base:
+        raise HTTPException(status_code=400, detail="Missing preview target")
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, "node_modules/" + full_path)
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent", "accept-encoding")}
+            resp = await client.get(target_url, headers=headers)
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                "x-frame-options",
+                "content-security-policy",
+                "cross-origin-opener-policy",
+                "cross-origin-embedder-policy",
+                "cross-origin-resource-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
+
+@app.get("/__vite_ping")
+async def preview_bridge_vite_ping(request: Request):
+    token = _get_preview_token(request)
+    target_base = None
+    if token and session_manager:
+        try:
+            sess = session_manager.validate_session(token)
+            target_base = sess.get("preview_url")
+        except ValueError:
+            target_base = None
+    if not target_base:
+        try:
+            client_ip = request.client.host if request.client else None
+        except Exception:
+            client_ip = None
+        if client_ip:
+            target_base = LAST_PREVIEW_TARGET_BY_IP.get(client_ip)
+    if not target_base:
+        raise HTTPException(status_code=400, detail="Missing preview target")
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, "__vite_ping")
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent")}
+            resp = await client.get(target_url, headers=headers)
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                "x-frame-options",
+                "content-security-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
+
+@app.get("/@fs/{full_path:path}")
+async def preview_bridge_fs(request: Request, full_path: str):
+    token = _get_preview_token(request)
+    target_base = None
+    if token and session_manager:
+        try:
+            sess = session_manager.validate_session(token)
+            target_base = sess.get("preview_url")
+        except ValueError:
+            target_base = None
+    if not target_base:
+        try:
+            client_ip = request.client.host if request.client else None
+        except Exception:
+            client_ip = None
+        if client_ip:
+            target_base = LAST_PREVIEW_TARGET_BY_IP.get(client_ip)
+    if not target_base:
+        raise HTTPException(status_code=400, detail="Missing preview target")
+    if not target_base.endswith("/"):
+        target_base += "/"
+    target_url = urljoin(target_base, "@fs/" + full_path)
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("accept", "user-agent")}
+            resp = await client.get(target_url, headers=headers)
+            excluded_headers = {
+                "content-encoding",
+                "transfer-encoding",
+                "connection",
+                "content-length",
+                "x-frame-options",
+                "content-security-policy",
+            }
+            response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers]
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(response_headers))
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Preview bridge upstream error: {str(e)}")
+
 @app.post("/api/app/launch")
-async def launch_app(request: LaunchRequest):
+async def launch_app(request: LaunchRequest, req: Request):
     """
     Launch a sandboxed application instance with resource limits.
     Returns preview URL, instance ID, expiry, and logs URL.
@@ -759,18 +1343,77 @@ async def launch_app(request: LaunchRequest):
         run_command = run_cmd[0] if run_cmd else None
         
         # Launch instance with command tracking
-        instance = await sandbox_orchestrator.launch_instance(
-            app_path=str(app_path),
-            port=request.port,
-            cpu_limit=request.cpu_limit,
-            memory_limit=request.memory_limit,
-            timeout=request.timeout,
-            environment=request.environment,
-            build_command=build_command,
-            run_command=run_command,
-            approved_commands=approved_commands,
-            session_id=session_id,
-        )
+        auto_fix_meta = None
+        try:
+            instance = await sandbox_orchestrator.launch_instance(
+                app_path=str(app_path),
+                port=request.port,
+                cpu_limit=request.cpu_limit,
+                memory_limit=request.memory_limit,
+                timeout=request.timeout,
+                environment=request.environment,
+                build_command=build_command,
+                run_command=run_command,
+                approved_commands=approved_commands,
+                session_id=session_id,
+            )
+        except Exception as launch_err:
+            err_msg = str(launch_err)
+            # Attempt automated resolution on Docker build failures if permitted
+            if (("Docker build failed" in err_msg) or ("Fallback (dev) failed" in err_msg)) and enhanced_resolver:
+                if permission_manager.has_permission(session_id, "allow_agent_auto_fix"):
+                    try:
+                        resolution = await enhanced_resolver.analyze_and_resolve(
+                            app_path=str(app_path),
+                            error_logs=err_msg,
+                            context={"session_id": session_id},
+                            run_mode=RunMode.ATTEMPT_FIX,
+                            timeout_seconds=240,
+                        )
+                        auto_fix_meta = {
+                            "attempted": True,
+                            "resolver_run_id": resolution.get("run_id"),
+                            "resolution": {
+                                "status": resolution.get("status"),
+                                "issues_found": resolution.get("issues_found"),
+                                "issues_resolved": resolution.get("issues_resolved"),
+                            },
+                            "resolver_logs_url": f"/api/agent/problem-resolver/{resolution.get('run_id')}/logs" if resolution.get("run_id") else None,
+                        }
+                        # Retry launch once after fixes
+                        instance = await sandbox_orchestrator.launch_instance(
+                            app_path=str(app_path),
+                            port=request.port,
+                            cpu_limit=request.cpu_limit,
+                            memory_limit=request.memory_limit,
+                            timeout=request.timeout,
+                            environment=request.environment,
+                            build_command=build_command,
+                            run_command=run_command,
+                            approved_commands=approved_commands,
+                            session_id=session_id,
+                        )
+                    except Exception as retry_err:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=(
+                                f"Auto-fix attempted but launch still failed: {str(retry_err)}. "
+                                f"ResolverRunId={auto_fix_meta.get('resolver_run_id') if auto_fix_meta else None}"
+                            ),
+                        )
+                else:
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "error": "permission_required",
+                            "message": "Grant 'allow_agent_auto_fix' to let the agent analyze and apply low-risk fixes, then retry launch.",
+                            "requiredActions": ["allow_agent_auto_fix"],
+                            "sessionId": session_id,
+                        },
+                    )
+            else:
+                # Non-build errors: bubble up
+                raise
         
         # Create secure session with rich metadata
         session = session_manager.create_session(
@@ -801,17 +1444,26 @@ async def launch_app(request: LaunchRequest):
         # Reset retry state on success
         LAUNCH_RETRY_STATE[session_id] = {"count": 0, "exhausted_until": 0}
 
+        base = str(req.base_url).rstrip("/")
+        secure_url = f"{base}/preview/bridge/?session={session['session_token']}"
         return {
             "status": "success",
             "instance_id": instance["instance_id"],
+            # Raw sandbox URL for opening in a new tab (full page view)
             "preview_url": instance["preview_url"],
-            "secure_preview_url": session["preview_url"],
+            # Bridged URL for embedding inside Live Preview iframe (same-origin)
+            "secure_preview_url": secure_url,
+            # Also expose raw URL explicitly for open-in-new-tab
+            "raw_preview_url": instance["preview_url"],
             "session_token": session["session_token"],
             "expires_at": instance["expires_at"],
             "logs_url": instance["logs_url"],
             "port": instance["port"],
             "message": "Sandbox instance launched successfully",
-            "session_id": session_id
+            "session_id": session_id,
+            "auto_fix_attempted": bool(auto_fix_meta and auto_fix_meta.get("attempted")),
+            "resolver_run_id": (auto_fix_meta or {}).get("resolver_run_id"),
+            "resolver_logs_url": (auto_fix_meta or {}).get("resolver_logs_url"),
         }
         
     except Exception as e:

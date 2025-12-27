@@ -3,6 +3,8 @@ import { FileTree } from './FileTree';
 import { CodeEditor } from './CodeEditor';
 import { TerminalPanel } from './TerminalPanel';
 import { SecretsPanel } from './SecretsPanel';
+import ChatPanel from './ChatPanel';
+import { ChangesPanel } from './ChangesPanel';
 
 interface EditorPanelProps {
   root: string;
@@ -29,6 +31,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatSessionId, setChatSessionId] = useState<string>('');
   const language = useMemo(() => guessLanguage(selected), [selected]);
 
   const loadFile = useCallback(async (relPath: string) => {
@@ -113,7 +116,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
   useEffect(() => { refreshGitStatus(); }, [refreshGitStatus]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
       <div className="lg:col-span-1">
         <FileTree root={root} onSelectFile={loadFile} />
         <div className="mt-3 p-2 border rounded bg-white">
@@ -153,6 +156,12 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
         {/* Integrated terminal */}
         <TerminalPanel cwd={root} />
         {error && <div className="text-sm text-red-600">{error}</div>}
+      </div>
+      <div className="lg:col-span-1">
+        <ChatPanel embedded hideSessionList contextRoot={root} selectedPath={selected} onSessionReady={setChatSessionId} />
+        <div className="mt-3">
+          <ChangesPanel sessionId={chatSessionId} contextRoot={root} selectedPath={selected} />
+        </div>
       </div>
     </div>
   );

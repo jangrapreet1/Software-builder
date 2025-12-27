@@ -17,11 +17,11 @@ interface LogsPanelProps {
 export const LogsPanel: React.FC<LogsPanelProps> = ({
   instanceId,
   logsUrl,
-  logs = [],
+  logs,
   tail = 100,
   autoScroll = true
 }) => {
-  const [localLogs, setLocalLogs] = useState<LogEntry[]>(logs);
+  const [localLogs, setLocalLogs] = useState<LogEntry[]>(logs ?? []);
   const [isStreaming, setIsStreaming] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -33,8 +33,9 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
   };
 
   useEffect(() => {
-    setLocalLogs(logs);
-    scrollToBottom();
+    if (logs) {
+      setLocalLogs(logs);
+    }
   }, [logs]);
 
   useEffect(() => {

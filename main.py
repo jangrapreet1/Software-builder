@@ -643,7 +643,7 @@ if __name__ == "__main__":
     console.print("[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
     
     uvicorn.run(
-        "main:app",
+        "coordinator.main:app",
         host=settings.coordinator_host,
         port=settings.coordinator_port,
         reload=True,

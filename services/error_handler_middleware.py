@@ -237,6 +237,11 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         if self.debug and stack_trace:
             error_response["error"]["stack_trace"] = stack_trace
         
+        # Include optional metadata added by handlers
+        extra_meta = getattr(request.state, "error_metadata", None)
+        if extra_meta:
+            error_response["error"]["metadata"] = extra_meta
+        
         return JSONResponse(
             status_code=status_code,
             content=error_response
