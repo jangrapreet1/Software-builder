@@ -22,7 +22,7 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('project-builder');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const { notifications, addNotification, dismissNotification } = useNotifications();
 
   // Set up API client notification handler
@@ -78,33 +78,30 @@ const App: React.FC = () => {
             {/* Tab Navigation */}
             <div className="flex items-center space-x-2 bg-white/10 backdrop-blur rounded-2xl px-2 py-2">
               <button
-                className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  activeTab === 'project-builder'
+                className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeTab === 'project-builder'
                     ? 'bg-white text-blue-600 shadow-lg scale-105'
                     : 'text-white hover:bg-white/20'
-                }`}
+                  }`}
                 onClick={() => setActiveTab('project-builder')}
               >
                 <i className="fas fa-hammer mr-2"></i>
                 Project Builder
               </button>
               <button
-                className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  activeTab === 'live-preview'
+                className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeTab === 'live-preview'
                     ? 'bg-white text-blue-600 shadow-lg scale-105'
                     : 'text-white hover:bg-white/20'
-                }`}
+                  }`}
                 onClick={() => setActiveTab('live-preview')}
               >
                 <i className="fas fa-eye mr-2"></i>
                 Live Preview
               </button>
               <button
-                className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  activeTab === 'tester'
+                className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeTab === 'tester'
                     ? 'bg-white text-blue-600 shadow-lg scale-105'
                     : 'text-white hover:bg-white/20'
-                }`}
+                  }`}
                 onClick={() => setActiveTab('tester')}
               >
                 <i className="fas fa-vial mr-2"></i>

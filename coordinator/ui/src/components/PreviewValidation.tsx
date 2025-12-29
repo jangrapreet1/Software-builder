@@ -30,12 +30,12 @@ export const PreviewValidation: React.FC<PreviewValidationProps> = ({
 
   useEffect(() => {
     let isMounted = true;
-    let checkInterval: NodeJS.Timeout;
+    let checkInterval: ReturnType<typeof setInterval>;
 
     const checkPreviewStatus = async () => {
       try {
         const startTime = Date.now();
-        const response = await fetch(previewUrl, {
+        await fetch(previewUrl, {
           method: 'HEAD',
           mode: 'no-cors' // Avoid CORS issues for status check
         });

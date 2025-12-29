@@ -15,7 +15,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [problems, setProblems] = useState<Problem[]>([]);
-  const [selectedProblemId, setSelectedProblemId] = useState<string | null>(null);
+  const [, setSelectedProblemId] = useState<string | null>(null);
   const [problemDetails, setProblemDetails] = useState<ProblemDetailData | null>(null);
   const [isFixing, setIsFixing] = useState(false);
   const [pullRequests, setPullRequests] = useState<PRInfo[]>([]);
@@ -31,7 +31,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
 
     try {
       const sessionId = `session-${Date.now()}`;
-      
+
       // Parse commands
       const buildCmd = buildCommands.trim() ? buildCommands.split('&&').map(c => c.trim()) : [];
       const testCmd = testCommands.trim() ? testCommands.split('&&').map(c => c.trim()) : [];
@@ -51,11 +51,11 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
       });
 
       const data = await response.json();
-      
+
       if (data.status === 'success') {
         setCurrentRunId(data.runId);
         onNotification('info', 'Analysis Started', 'Problem resolver is analyzing your application...');
-        
+
         // Poll for results
         pollForResults(data.runId);
       } else {
@@ -80,7 +80,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
         if (data.status === 'completed' || data.status === 'failed') {
           // Analysis complete
           setIsAnalyzing(false);
-          
+
           if (data.result) {
             processResults(data.result);
           }
@@ -148,7 +148,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
 
   const handleViewDetails = (problemId: string) => {
     setSelectedProblemId(problemId);
-    
+
     // Find the problem details from current results
     if (currentRunId) {
       fetch(`/api/agent/problem-resolver/${currentRunId}/result`)
@@ -165,7 +165,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
     }
   };
 
-  const handleAttemptFix = async (problemId: string) => {
+  const handleAttemptFix = async (_problemId: string) => {
     setIsFixing(true);
 
     try {
@@ -189,7 +189,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
       });
 
       const data = await response.json();
-      
+
       if (data.status === 'success') {
         onNotification('info', 'Applying Fix', 'Attempting to fix the issue...');
         setCurrentRunId(data.runId);
@@ -268,7 +268,7 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
               </label>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {runMode === 'diagnose-only' 
+              {runMode === 'diagnose-only'
                 ? 'Only detect and report issues without making changes'
                 : 'Attempt to automatically fix low-risk issues'}
             </p>

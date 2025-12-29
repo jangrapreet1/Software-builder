@@ -18,7 +18,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
-from dotenv import load_dotenv
+
 from rich.console import Console
 import re
 import subprocess
@@ -40,6 +40,10 @@ except Exception:
     # Fallback to os.sys if needed
     if str(ROOT_DIR) not in os.sys.path:
         os.sys.path.insert(0, str(ROOT_DIR))
+
+from dotenv import load_dotenv
+# Load environment variables early
+load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 # Initialize console for rich output
 console = Console()
@@ -77,7 +81,7 @@ except ImportError as e:
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Load environment variables
-load_dotenv()
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -86,6 +90,23 @@ app = FastAPI(
     version="1.0.0",
     default_response_class=ORJSONResponse,
 )
+
+# Mount static files for React UI assets
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+_ui_dist = ROOT_DIR / "coordinator" / "ui" / "dist"
+_ui_assets = _ui_dist / "assets"
+if _ui_assets.exists():
+    app.mount("/assets", StaticFiles(directory=str(_ui_assets)), name="assets")
+
+# Serve UI endpoint
+@app.get("/ui")
+async def serve_ui():
+    """Serve the React UI"""
+    index_file = _ui_dist / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    return Response("UI not found", status_code=404)
 
 # Add enhanced error handling middleware
 add_error_handling(app, debug=os.getenv("DEBUG", "false").lower() == "true")
@@ -175,6 +196,7 @@ async def _metrics_mw(request: Request, call_next):
 # Track last preview token observed per client IP to assist alias routes when
 # Referer and cookies are unavailable in some browsers or CSP settings.
 LAST_PREVIEW_TOKEN_BY_IP: Dict[str, str] = {}
+LAST_PREVIEW_TARGET_BY_IP: Dict[str, str] = {}
 
 # Launch retry governance (per session_id)
 LAUNCH_RETRY_STATE: Dict[str, Dict] = {}
@@ -2766,12 +2788,25 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
-ui_path = os.path.join(os.path.dirname(__file__), "ui")
-if os.path.exists(ui_path):
-    @app.get("/ui")
-    async def serve_ui():
-        """Serve the testing UI"""
-        return FileResponse(os.path.join(ui_path, "index.html"))
+ui_path = Path(os.path.join(os.path.dirname(__file__), "ui"))
+dist_path = ui_path / "dist"
+
+# Mount assets if they exist (React build)
+if dist_path.exists() and (dist_path / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
+
+@app.get("/ui")
+async def serve_ui():
+    """Serve the testing UI (React App or Fallback)"""
+    # Prefer built React app
+    if dist_path.exists() and (dist_path / "index.html").exists():
+        return FileResponse(str(dist_path / "index.html"))
+    
+    # Fallback to simple UI
+    if ui_path.exists() and (ui_path / "index.html").exists():
+        return FileResponse(str(ui_path / "index.html"))
+    
+    return Response("UI not found", status_code=404)
 
 
 if __name__ == "__main__":

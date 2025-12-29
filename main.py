@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from pathlib import Path
 import json
+from datetime import datetime
 
 from workflows.app_builder import AppBuilderWorkflow
 from config.settings import Settings
@@ -627,12 +628,409 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
-ui_path = os.path.join(os.path.dirname(__file__), "ui")
-if os.path.exists(ui_path):
-    @app.get("/ui")
-    async def serve_ui():
-        """Serve the testing UI"""
-        return FileResponse(os.path.join(ui_path, "index.html"))
+# React build from coordinator/ui/dist
+react_dist_path = os.path.join(os.path.dirname(__file__), "coordinator", "ui", "dist")
+react_assets_path = os.path.join(react_dist_path, "assets")
+
+# Fallback Vue UI
+vue_ui_path = os.path.join(os.path.dirname(__file__), "ui")
+
+# Mount assets if React build exists
+if os.path.exists(react_assets_path):
+    app.mount("/assets", StaticFiles(directory=react_assets_path), name="assets")
+
+@app.get("/ui")
+async def serve_ui():
+    """Serve the testing UI (React App or Fallback Vue)"""
+    # Prefer built React app
+    react_index = os.path.join(react_dist_path, "index.html")
+    if os.path.exists(react_index):
+        return FileResponse(react_index)
+    
+    # Fallback to Vue UI
+    vue_index = os.path.join(vue_ui_path, "index.html")
+    if os.path.exists(vue_index):
+        return FileResponse(vue_index)
+    
+    return Response("UI not found", status_code=404)
+
+
+# ============================================
+# FILE SYSTEM ENDPOINTS (from coordinator/main.py)
+# ============================================
+
+class FSWriteRequest(BaseModel):
+    root: str
+    path: str
+    content: str
+
+
+class FSMkdirRequest(BaseModel):
+    root: str
+    path: str
+
+
+class FSRenameRequest(BaseModel):
+    root: str
+    src: str
+    dest: str
+
+
+def _resolve_safe_path(root: str, rel_path: str) -> Path:
+    base = Path(root).resolve()
+    target = (base / rel_path).resolve()
+    if not str(target).startswith(str(base)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return target
+
+
+@app.get("/api/fs/list")
+async def fs_list(root: str, path: str = "."):
+    base = Path(root).resolve()
+    target = _resolve_safe_path(root, path)
+    if not base.exists() or not target.exists():
+        return {"root": str(base), "path": str(Path(path)), "items": []}
+    if target.is_file():
+        stat = target.stat()
+        return {
+            "type": "file",
+            "name": target.name,
+            "size": stat.st_size,
+            "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+            "path": str(target.relative_to(base))
+        }
+    items = []
+    for entry in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        stat = entry.stat()
+        items.append({
+            "type": "directory" if entry.is_dir() else "file",
+            "name": entry.name,
+            "size": stat.st_size,
+            "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+            "path": str(entry.relative_to(base))
+        })
+    return {"root": str(base), "path": str(target.relative_to(base)), "items": items}
+
+
+@app.get("/api/fs/read")
+async def fs_read(root: str, path: str):
+    target = _resolve_safe_path(root, path)
+    if not target.exists() or not target.is_file():
+        return JSONResponse(status_code=200, content={"error": "file_not_found", "path": path})
+    try:
+        content = target.read_text(encoding="utf-8")
+        return {"path": path, "content": content}
+    except UnicodeDecodeError:
+        data = target.read_bytes()
+        return JSONResponse(status_code=415, content={"error": "binary_file", "size": len(data)})
+
+
+@app.post("/api/fs/write")
+async def fs_write(req: FSWriteRequest):
+    target = _resolve_safe_path(req.root, req.path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(req.content, encoding="utf-8")
+    return {"status": "success", "path": req.path}
+
+
+@app.post("/api/fs/mkdir")
+async def fs_mkdir(req: FSMkdirRequest):
+    target = _resolve_safe_path(req.root, req.path)
+    target.mkdir(parents=True, exist_ok=True)
+    return {"status": "success"}
+
+
+@app.post("/api/fs/rename")
+async def fs_rename(req: FSRenameRequest):
+    src = _resolve_safe_path(req.root, req.src)
+    dest = _resolve_safe_path(req.root, req.dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dest)
+    return {"status": "success"}
+
+
+@app.delete("/api/fs/delete")
+async def fs_delete(root: str, path: str):
+    target = _resolve_safe_path(root, path)
+    if target.is_dir():
+        for p in sorted(target.rglob("*"), reverse=True):
+            if p.is_file():
+                p.unlink(missing_ok=True)
+            elif p.is_dir():
+                p.rmdir()
+        target.rmdir()
+    else:
+        target.unlink(missing_ok=True)
+    return {"status": "success"}
+
+
+# ============================================
+# SECRETS ENDPOINTS
+# ============================================
+
+class SecretSetRequest(BaseModel):
+    root: str
+    key: str
+    value: str
+    filename: str = ".env"
+
+
+@app.get("/api/secrets/list")
+async def secrets_list(root: str, filename: str = ".env"):
+    base = Path(root).resolve()
+    env_file = _resolve_safe_path(root, filename)
+    secrets: dict = {}
+    if env_file.exists() and env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line or line.strip().startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                secrets[k.strip()] = v.strip()
+    return {"path": str(env_file.relative_to(base)), "secrets": secrets}
+
+
+@app.post("/api/secrets/set")
+async def secrets_set(req: SecretSetRequest):
+    env_file = _resolve_safe_path(req.root, req.filename)
+    existing: dict = {}
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line or line.strip().startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                existing[k.strip()] = v.strip()
+    existing[req.key] = req.value
+    lines = [f"{k}={v}" for k, v in existing.items()]
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"status": "success"}
+
+
+# ============================================
+# GIT ENDPOINTS
+# ============================================
+
+import subprocess
+
+
+def _run_git(repo_path: str, args: list) -> dict:
+    repo = Path(repo_path).resolve()
+    if not repo.exists():
+        return {"exit_code": 1, "stdout": "", "stderr": "Repository path not found"}
+    try:
+        result = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        return {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+    except FileNotFoundError:
+        return {"exit_code": 1, "stdout": "", "stderr": "Git not available"}
+
+
+@app.get("/api/git/status")
+async def git_status(repo_path: str):
+    repo = Path(repo_path).resolve()
+    if not repo.exists():
+        return {"exit_code": 1, "stdout": "", "stderr": "Repository path not found"}
+    res = _run_git(repo_path, ["status", "--porcelain", "-b"])
+    return res
+
+
+# ============================================
+# REPO DETECTION ENDPOINT
+# ============================================
+
+class RepoDetectRequest(BaseModel):
+    path: str = ""
+    root: str = ""  # Alternative field name
+    repo_path: str = ""  # Another alternative
+
+
+@app.post("/api/repo/detect")
+async def repo_detect(req: RepoDetectRequest):
+    # Accept any of these fields
+    target_path = req.path or req.root or req.repo_path
+    if not target_path:
+        return {"detected": False, "error": "No path provided"}
+    target = Path(target_path).resolve()
+    if not target.exists():
+        return {"detected": False, "error": "Path not found"}
+    # Check for common indicators
+    has_git = (target / ".git").exists()
+    has_package_json = (target / "package.json").exists()
+    has_requirements = (target / "requirements.txt").exists()
+    return {
+        "detected": True,
+        "path": str(target),
+        "has_git": has_git,
+        "has_package_json": has_package_json,
+        "has_requirements": has_requirements
+    }
+
+
+# ============================================
+# GENERATED PROJECTS ENDPOINT
+# ============================================
+
+@app.get("/api/generated/projects")
+async def list_generated_projects():
+    generated_dir = Path(settings.generated_apps_dir)
+    if not generated_dir.exists():
+        return {"projects": []}
+    projects = []
+    for proj in generated_dir.iterdir():
+        if proj.is_dir():
+            projects.append({
+                "name": proj.name,
+                "path": str(proj),
+                "has_backend": (proj / "backend").exists(),
+                "has_frontend": (proj / "frontend").exists()
+            })
+    return {"projects": projects}
+
+
+# ============================================
+# CHAT SESSIONS ENDPOINT (placeholder)
+# ============================================
+
+@app.get("/api/chat/sessions")
+@app.post("/api/chat/sessions")
+async def list_chat_sessions():
+    # Placeholder - return empty list
+    return {"sessions": []}
+
+
+@app.get("/api/chat/{session_id}/history")
+async def get_chat_history(session_id: str):
+    # Placeholder - chat history not implemented yet
+    return {"session_id": session_id, "messages": []}
+
+
+# ============================================
+# PROBLEM RESOLVER ENDPOINT (placeholder)
+# ============================================
+
+class ProblemResolverRequest(BaseModel):
+    session_id: str = ""
+    app_path: str = ""
+    commands: dict = {}
+    run_mode: str = "diagnose-only"
+
+
+@app.post("/api/agent/problem-resolver")
+async def problem_resolver(req: ProblemResolverRequest):
+    # Placeholder - problem resolver not implemented yet
+    return {
+        "status": "success",
+        "runId": "placeholder-run-id",
+        "message": "Problem resolver endpoint placeholder"
+    }
+
+
+# ============================================
+# SESSION PERMISSIONS ENDPOINT (placeholder)
+# ============================================
+
+class SessionPermissionsRequest(BaseModel):
+    session_id: str = ""
+    permissions: dict = {}
+
+
+@app.post("/api/session/permissions")
+async def set_session_permissions(req: SessionPermissionsRequest):
+    # Placeholder
+    return {"status": "success", "permissions": req.permissions}
+
+
+# ============================================
+# APP LAUNCH ENDPOINT (placeholder)
+# ============================================
+
+class AppLaunchRequest(BaseModel):
+    project_path: str = ""
+    project_name: str = ""
+
+
+@app.post("/api/app/launch")
+async def app_launch(req: AppLaunchRequest):
+    # Placeholder - app launch not implemented yet
+    return {
+        "status": "success",
+        "message": "App launch placeholder",
+        "project_path": req.project_path
+    }
+
+
+# ============================================
+# TERMINAL WEBSOCKET
+# ============================================
+
+import asyncio
+
+terminal_processes: dict = {}
+
+
+@app.websocket("/api/term/{term_id}")
+async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
+    await websocket.accept()
+    proc = terminal_processes.get(term_id)
+    if proc is None or proc.poll() is not None:
+        shell_cmd = ["bash"] if os.name != "nt" else ["cmd.exe"]
+        try:
+            proc = subprocess.Popen(
+                shell_cmd,
+                cwd=str(Path(cwd).resolve()),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            await websocket.send_text(f"ERROR: {e}")
+            await websocket.close()
+            return
+        terminal_processes[term_id] = proc
+
+    async def stream_output():
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                if proc.stdout is None:
+                    break
+                line = await loop.run_in_executor(None, proc.stdout.readline)
+                if not line:
+                    break
+                try:
+                    await websocket.send_text(line)
+                except Exception:
+                    break
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+
+    task = asyncio.create_task(stream_output())
+    try:
+        while True:
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            if data == "__exit__":
+                break
+            if proc.stdin:
+                proc.stdin.write(data + ("\n" if not data.endswith("\n") else ""))
+                proc.stdin.flush()
+    finally:
+        task.cancel()
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+        terminal_processes.pop(term_id, None)
 
 
 if __name__ == "__main__":
@@ -643,7 +1041,7 @@ if __name__ == "__main__":
     console.print("[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
     
     uvicorn.run(
-        "coordinator.main:app",
+        "main:app",
         host=settings.coordinator_host,
         port=settings.coordinator_port,
         reload=True,
