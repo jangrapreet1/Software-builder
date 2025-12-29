@@ -28,7 +28,7 @@
 ## 🔧 Configuration
 
 ```env
-GOOGLE_API_KEY=AIzaSyCmW4YdtebFNjNHuLFdb0CqpAbEzjVSrx8
+GOOGLE_API_KEY=AIzaSyCmW4YdtebFNjNHuLFdb0CqpAbEzj****
 GEMINI_MODEL=gemini-flash-latest
 COORDINATOR_PORT=5000
 ```
