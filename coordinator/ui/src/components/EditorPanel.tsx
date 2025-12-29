@@ -10,6 +10,13 @@ interface EditorPanelProps {
   root: string;
 }
 
+interface OpenTab {
+  path: string;
+  content: string;
+  dirty: boolean;
+  language: string;
+}
+
 const guessLanguage = (path: string) => {
   const lower = path.toLowerCase();
   if (lower.endsWith('.ts')) return 'typescript';
@@ -26,15 +33,22 @@ const guessLanguage = (path: string) => {
 };
 
 export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
-  const [selected, setSelected] = useState<string>('');
-  const [content, setContent] = useState<string>('');
-  const [dirty, setDirty] = useState(false);
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chatSessionId, setChatSessionId] = useState<string>('');
-  const language = useMemo(() => guessLanguage(selected), [selected]);
+
+  const activeTab = useMemo(() => openTabs.find(t => t.path === activeTabPath), [openTabs, activeTabPath]);
 
   const loadFile = useCallback(async (relPath: string) => {
+    // Check if already open
+    const existing = openTabs.find(t => t.path === relPath);
+    if (existing) {
+      setActiveTabPath(relPath);
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
@@ -43,34 +57,64 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
         throw new Error(`Failed to read file: ${res.status}`);
       }
       const data = await res.json();
-      setSelected(relPath);
-      setContent(data.content || '');
-      setDirty(false);
+      const newTab: OpenTab = {
+        path: relPath,
+        content: data.content || '',
+        dirty: false,
+        language: guessLanguage(relPath)
+      };
+      setOpenTabs(prev => [...prev, newTab]);
+      setActiveTabPath(relPath);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to read file');
     } finally {
       setLoading(false);
     }
-  }, [root]);
+  }, [root, openTabs]);
+
+  const handleContentChange = useCallback((newContent: string) => {
+    setOpenTabs(prev => prev.map(tab =>
+      tab.path === activeTabPath
+        ? { ...tab, content: newContent, dirty: true }
+        : tab
+    ));
+  }, [activeTabPath]);
 
   const handleSave = useCallback(async () => {
-    if (!selected) return;
+    if (!activeTab) return;
     setError(null);
     setLoading(true);
     try {
       const res = await fetch('/api/fs/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ root, path: selected, content })
+        body: JSON.stringify({ root, path: activeTab.path, content: activeTab.content })
       });
       if (!res.ok) throw new Error(`Save failed: ${res.status}`);
-      setDirty(false);
+      setOpenTabs(prev => prev.map(tab =>
+        tab.path === activeTabPath ? { ...tab, dirty: false } : tab
+      ));
     } catch (e: any) {
       setError(e?.message ?? 'Failed to save file');
     } finally {
       setLoading(false);
     }
-  }, [root, selected, content]);
+  }, [root, activeTab, activeTabPath]);
+
+  const handleCloseTab = useCallback((pathToClose: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const tab = openTabs.find(t => t.path === pathToClose);
+    if (tab?.dirty) {
+      if (!window.confirm(`"${pathToClose}" has unsaved changes. Close anyway?`)) {
+        return;
+      }
+    }
+    setOpenTabs(prev => prev.filter(t => t.path !== pathToClose));
+    if (activeTabPath === pathToClose) {
+      const remaining = openTabs.filter(t => t.path !== pathToClose);
+      setActiveTabPath(remaining.length > 0 ? remaining[remaining.length - 1].path : '');
+    }
+  }, [openTabs, activeTabPath]);
 
   const handleDownload = useCallback(() => {
     try {
@@ -81,9 +125,22 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
     }
   }, [root]);
 
+  // Keyboard shortcut for save
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleSave]);
+
   // Git helpers
   const [commitMessage, setCommitMessage] = useState('update via editor');
   const [gitStatus, setGitStatus] = useState<string>('');
+  const [remoteUrl, setRemoteUrl] = useState('');
 
   const refreshGitStatus = useCallback(async () => {
     try {
@@ -113,7 +170,34 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
     await refreshGitStatus();
   }, [root, commitMessage, refreshGitStatus]);
 
+  const handlePush = useCallback(async () => {
+    if (remoteUrl) {
+      await fetch('/api/git/remote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_path: root, name: 'origin', url: remoteUrl })
+      });
+    }
+    await fetch('/api/git/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_path: root, remote: 'origin', branch: 'main', set_upstream: true })
+    });
+    await refreshGitStatus();
+  }, [root, remoteUrl, refreshGitStatus]);
+
+  const handlePull = useCallback(async () => {
+    await fetch('/api/git/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_path: root, remote: 'origin', branch: 'main' })
+    });
+    await refreshGitStatus();
+  }, [root, refreshGitStatus]);
+
   useEffect(() => { refreshGitStatus(); }, [refreshGitStatus]);
+
+  const getFileName = (path: string) => path.split(/[\\/]/).pop() || path;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -127,30 +211,78 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
             <input
               className="flex-1 text-xs border rounded px-2 py-1"
               value={commitMessage}
-              onChange={(e)=>setCommitMessage(e.target.value)}
+              onChange={(e) => setCommitMessage(e.target.value)}
               placeholder="Commit message"
               title="Commit message"
               aria-label="Commit message"
             />
             <button onClick={commit} className="text-xs px-2 py-1 bg-blue-600 text-white rounded">Commit</button>
           </div>
+          <div className="flex items-center gap-2 mt-2">
+            <input
+              className="flex-1 text-xs border rounded px-2 py-1"
+              value={remoteUrl}
+              onChange={(e) => setRemoteUrl(e.target.value)}
+              placeholder="Remote URL (optional)"
+              title="Remote URL"
+              aria-label="Remote URL"
+            />
+            <button onClick={handlePull} className="text-xs px-2 py-1 bg-gray-600 text-white rounded">Pull</button>
+            <button onClick={handlePush} className="text-xs px-2 py-1 bg-green-600 text-white rounded">Push</button>
+          </div>
         </div>
         <SecretsPanel root={root} />
       </div>
       <div className="lg:col-span-2 space-y-2">
+        {/* Tab Bar */}
         <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-600 truncate" title={selected}>{selected || 'Select a file'}</div>
+          <div className="flex items-center space-x-1 overflow-x-auto">
+            {openTabs.map(tab => (
+              <div
+                key={tab.path}
+                onClick={() => setActiveTabPath(tab.path)}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-t text-sm cursor-pointer border-b-2 ${tab.path === activeTabPath
+                  ? 'bg-white border-blue-500 text-blue-700'
+                  : 'bg-gray-100 border-transparent text-gray-600 hover:bg-gray-200'
+                  }`}
+              >
+                <span className="truncate max-w-[120px]" title={tab.path}>{getFileName(tab.path)}</span>
+                {tab.dirty && <span className="w-2 h-2 rounded-full bg-amber-500" title="Unsaved"></span>}
+                <button
+                  onClick={(e) => handleCloseTab(tab.path, e)}
+                  className="ml-1 text-gray-400 hover:text-red-500 text-xs"
+                  title="Close tab"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {openTabs.length === 0 && (
+              <div className="text-sm text-gray-500 px-3 py-1.5">No files open</div>
+            )}
+          </div>
           <div className="flex items-center gap-2">
-            {dirty && <span className="text-xs text-amber-600">Unsaved</span>}
-            <button onClick={handleDownload} className="px-3 py-1 rounded bg-gray-700 text-white">Download Code</button>
-            <button disabled={!dirty || !selected || loading} onClick={handleSave} className="px-3 py-1 rounded bg-blue-600 text-white disabled:opacity-50">Save</button>
+            <button onClick={handleDownload} className="px-3 py-1 rounded bg-gray-700 text-white text-sm">Download</button>
+            <button
+              disabled={!activeTab?.dirty || loading}
+              onClick={handleSave}
+              className="px-3 py-1 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
+            >
+              Save
+            </button>
           </div>
         </div>
         <div className="min-h-[400px]">
-          {selected ? (
-            <CodeEditor language={language} value={content} onChange={(v)=>{ setContent(v); setDirty(true); }} />
+          {activeTab ? (
+            <CodeEditor
+              language={activeTab.language}
+              value={activeTab.content}
+              onChange={handleContentChange}
+            />
           ) : (
-            <div className="h-[60vh] border rounded bg-white flex items-center justify-center text-gray-500 text-sm">Select a file to edit</div>
+            <div className="h-[60vh] border rounded bg-white flex items-center justify-center text-gray-500 text-sm">
+              Select a file to edit
+            </div>
           )}
         </div>
         {/* Integrated terminal */}
@@ -158,11 +290,12 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({ root }) => {
         {error && <div className="text-sm text-red-600">{error}</div>}
       </div>
       <div className="lg:col-span-1">
-        <ChatPanel embedded hideSessionList contextRoot={root} selectedPath={selected} onSessionReady={setChatSessionId} />
+        <ChatPanel embedded hideSessionList contextRoot={root} selectedPath={activeTabPath} onSessionReady={setChatSessionId} />
         <div className="mt-3">
-          <ChangesPanel sessionId={chatSessionId} contextRoot={root} selectedPath={selected} />
+          <ChangesPanel sessionId={chatSessionId} contextRoot={root} selectedPath={activeTabPath} />
         </div>
       </div>
     </div>
   );
 };
+
