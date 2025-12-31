@@ -9,53 +9,61 @@ interface StatusIndicatorProps {
   logsUrl?: string;
 }
 
-const statusConfig: Record<Status, { icon: string; color: string; bgColor: string; label: string }> = {
+const statusConfig: Record<Status, { icon: string; color: string; bgColor: string; borderColor: string; label: string }> = {
   detected: {
     icon: 'fa-search',
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-100',
+    color: 'text-blue-400',
+    bgColor: 'bg-blue-500/10',
+    borderColor: 'border-blue-500/20',
     label: 'Detected'
   },
   building: {
-    icon: 'fa-cog fa-spin',
-    color: 'text-yellow-600',
-    bgColor: 'bg-yellow-100',
+    icon: 'fa-circle-notch fa-spin',
+    color: 'text-amber-400',
+    bgColor: 'bg-amber-500/10',
+    borderColor: 'border-amber-500/20',
     label: 'Building'
   },
   running: {
     icon: 'fa-play-circle',
-    color: 'text-green-600',
-    bgColor: 'bg-green-100',
+    color: 'text-emerald-400',
+    bgColor: 'bg-emerald-500/10',
+    borderColor: 'border-emerald-500/20',
     label: 'Running'
   },
   error: {
-    icon: 'fa-exclamation-circle',
-    color: 'text-red-600',
-    bgColor: 'bg-red-100',
+    icon: 'fa-exclamation-triangle',
+    color: 'text-red-400',
+    bgColor: 'bg-red-500/10',
+    borderColor: 'border-red-500/20',
     label: 'Error'
   },
   stopped: {
     icon: 'fa-stop-circle',
-    color: 'text-gray-600',
-    bgColor: 'bg-gray-100',
+    color: 'text-gray-400',
+    bgColor: 'bg-gray-500/10',
+    borderColor: 'border-gray-500/20',
     label: 'Stopped'
   },
   idle: {
     icon: 'fa-pause-circle',
-    color: 'text-gray-400',
-    bgColor: 'bg-gray-50',
+    color: 'text-gray-500',
+    bgColor: 'bg-white/5',
+    borderColor: 'border-white/10',
     label: 'Idle'
   },
   resolving: {
-    icon: 'fa-tools fa-spin',
-    color: 'text-purple-600',
-    bgColor: 'bg-purple-100',
+    icon: 'fa-wrench fa-spin',
+    color: 'text-purple-400',
+    bgColor: 'bg-purple-500/10',
+    borderColor: 'border-purple-500/20',
     label: 'Resolving Issues'
   },
   testing: {
     icon: 'fa-vial fa-spin',
-    color: 'text-pink-600',
-    bgColor: 'bg-pink-100',
+    color: 'text-pink-400',
+    bgColor: 'bg-pink-500/10',
+    borderColor: 'border-pink-500/20',
     label: 'Running Tests'
   }
 };
@@ -69,58 +77,56 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   const config = statusConfig[status];
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center space-x-3">
-          <div className={`${config.bgColor} p-3 rounded-full`}>
-            <i className={`fas ${config.icon} ${config.color} text-xl`}></i>
+    <div className={`glass-panel rounded-2xl p-6 relative overflow-hidden transition-all duration-300 ${status === 'running' ? 'shadow-[0_0_30px_rgba(16,185,129,0.15)]' : ''}`}>
+      {/* Background Glow */}
+      <div className={`absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl opacity-10 -mr-10 -mt-10 ${config.bgColor.replace('bg-', 'bg-')}`}></div>
+
+      <div className="flex items-start justify-between mb-6 relative">
+        <div className="flex items-center space-x-4">
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${config.bgColor} ${config.borderColor} border shadow-inner`}>
+            <i className={`fas ${config.icon} ${config.color} text-xl drop-shadow-md`}></i>
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-gray-800">{config.label}</h3>
+            <h3 className="text-lg font-bold text-gray-100 tracking-tight">{config.label}</h3>
             {currentStep && (
-              <p className="text-sm text-gray-600">{currentStep}</p>
+              <p className="text-xs text-gray-400 font-mono mt-0.5 max-w-[200px] truncate">{currentStep}</p>
             )}
           </div>
         </div>
         {logsUrl && (
           <a
             href={logsUrl}
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            className="glass-button text-xs px-3 py-1.5 rounded-lg text-blue-300 hover:text-blue-100 hover:bg-blue-500/20 border-blue-500/20"
             title="View Logs"
+            target="_blank"
+            rel="noopener noreferrer"
           >
-            <i className="fas fa-file-alt mr-1"></i> Logs
+            <i className="fas fa-terminal mr-1.5"></i>Logs
           </a>
         )}
       </div>
 
       {progress !== undefined && (
-        <div className="mt-4">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-medium text-gray-700">Progress</span>
-            <span className="text-sm font-medium text-gray-700">{progress}%</span>
+        <div className="mt-4 relative">
+          <div className="flex justify-between items-end mb-2">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Progress</span>
+            <span className="text-sm font-bold text-white font-mono">{progress}%</span>
           </div>
-          <progress
-            value={Math.min(Math.max(progress, 0), 100)}
-            max={100}
-            className={`w-full h-2 overflow-hidden rounded-full bg-gray-200 [&::-webkit-progress-bar]:bg-gray-200 ${
-              status === 'error'
-                ? '[&::-webkit-progress-value]:bg-red-500 [&::-moz-progress-bar]:bg-red-500'
-                : status === 'running'
-                ? '[&::-webkit-progress-value]:bg-green-500 [&::-moz-progress-bar]:bg-green-500'
-                : '[&::-webkit-progress-value]:bg-blue-500 [&::-moz-progress-bar]:bg-blue-500'
-            }`}
-          />
-        </div>
-      )}
-
-      {status === 'building' && (
-        <div className="mt-4 flex items-center space-x-2 text-sm text-gray-600">
-          <div className="animate-pulse flex space-x-1">
-            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-blue-500 rounded-full animation-delay-200"></div>
-            <div className="w-2 h-2 bg-blue-500 rounded-full animation-delay-400"></div>
+          <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden border border-white/5">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${status === 'error' ? 'bg-red-500' :
+                  status === 'running' ? 'bg-emerald-500' :
+                    status === 'building' ? 'bg-amber-500' :
+                      'bg-indigo-500'
+                }`}
+              style={{ width: `${Math.min(Math.max(progress, 0), 100)}%` }}
+            >
+              {/* Shimmer effect */}
+              {(status === 'building' || status === 'resolving') && (
+                <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+              )}
+            </div>
           </div>
-          <span>In progress...</span>
         </div>
       )}
     </div>

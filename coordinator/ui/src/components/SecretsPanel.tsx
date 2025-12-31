@@ -94,49 +94,55 @@ export const SecretsPanel: React.FC<SecretsPanelProps> = ({ root }) => {
   };
 
   return (
-    <div className="mt-3 p-3 border rounded bg-white space-y-3">
+    <div className="glass-panel rounded-xl p-4 mt-4 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-xs font-semibold">Secrets</div>
-          <div className="text-[10px] text-gray-500">{filename}</div>
+          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center">
+            <i className="fas fa-key mr-2 text-accent"></i>
+            Secrets
+          </div>
+          <div className="text-[10px] text-gray-500 font-mono mt-0.5">{filename}</div>
         </div>
         <button
           type="button"
           onClick={loadSecrets}
           disabled={loading}
-          className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded disabled:opacity-60"
+          className="text-xs px-2 py-1 glass-button text-gray-400 hover:text-white rounded-lg disabled:opacity-50"
+          title="Refresh secrets"
         >
-          {loading ? 'Loading...' : 'Refresh'}
+          <i className={`fas fa-sync-alt ${loading ? 'fa-spin' : ''}`}></i>
         </button>
       </div>
 
-      {error && <div className="text-xs text-red-600">{error}</div>}
-      {message && <div className="text-xs text-green-600">{message}</div>}
+      {error && <div className="text-xs text-red-200 bg-red-500/10 p-2 rounded border border-red-500/20">{error}</div>}
+      {message && <div className="text-xs text-green-200 bg-green-500/10 p-2 rounded border border-green-500/20">{message}</div>}
 
-      <div className="max-h-40 overflow-auto border rounded">
+      <div className="max-h-40 overflow-auto border border-white/5 rounded-lg bg-black/20 custom-scrollbar">
         {sortedKeys.length === 0 ? (
-          <div className="text-xs text-gray-500 p-2">No secrets stored.</div>
+          <div className="text-xs text-gray-500 p-4 text-center italic">No secrets stored.</div>
         ) : (
           <table className="w-full text-xs">
-            <thead className="bg-gray-100 text-gray-600">
+            <thead className="bg-white/5 text-gray-400 sticky top-0 backdrop-blur-sm">
               <tr>
-                <th className="text-left px-2 py-1 font-medium">Key</th>
-                <th className="text-left px-2 py-1 font-medium">Value</th>
-                <th className="px-2 py-1"></th>
+                <th className="text-left px-3 py-2 font-medium">Key</th>
+                <th className="text-left px-3 py-2 font-medium">Value</th>
+                <th className="px-3 py-2"></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-white/5">
               {sortedKeys.map((key) => (
-                <tr key={key} className="border-t">
-                  <td className="px-2 py-1 font-mono break-all align-top">{key}</td>
-                  <td className="px-2 py-1 break-all align-top">{secrets[key]}</td>
-                  <td className="px-2 py-1 text-right align-top">
+                <tr key={key} className="hover:bg-white/5 transition-colors group">
+                  <td className="px-3 py-2 font-mono text-primary/90 break-all align-top">{key}</td>
+                  <td className="px-3 py-2 break-all align-top text-gray-400 group-hover:text-gray-200">
+                    <span className="blur-[2px] hover:blur-none transition-all cursor-text">{secrets[key]}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right align-top">
                     <button
                       type="button"
                       onClick={() => populateForm(key)}
-                      className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-[10px]"
+                      className="px-2 py-1 text-primary hover:text-white transition-colors text-[10px] opacity-0 group-hover:opacity-100"
                     >
-                      Edit
+                      <i className="fas fa-pen"></i>
                     </button>
                   </td>
                 </tr>
@@ -146,42 +152,42 @@ export const SecretsPanel: React.FC<SecretsPanelProps> = ({ root }) => {
         )}
       </div>
 
-      <form className="space-y-2" onSubmit={handleSubmit}>
+      <form className="space-y-3 pt-2 border-t border-white/5" onSubmit={handleSubmit}>
         <div className="space-y-1">
-          <label className="block text-[11px] font-medium text-gray-700" htmlFor="secret-key-input">
-            Key
+          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider" htmlFor="secret-key-input">
+            New Secret Key
           </label>
           <input
             id="secret-key-input"
-            className="w-full text-xs border rounded px-2 py-1"
+            className="w-full text-xs bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:ring-1 focus:ring-primary/50 outline-none font-mono"
             value={keyInput}
             onChange={(event) => setKeyInput(event.target.value)}
             placeholder="API_TOKEN"
-            title="Secret key"
-            aria-label="Secret key"
           />
         </div>
         <div className="space-y-1">
-          <label className="block text-[11px] font-medium text-gray-700" htmlFor="secret-value-input">
-            Value
+          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider" htmlFor="secret-value-input">
+            Safe Value
           </label>
           <textarea
             id="secret-value-input"
-            className="w-full text-xs border rounded px-2 py-1 min-h-[64px]"
+            className="w-full text-xs bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:ring-1 focus:ring-primary/50 outline-none font-mono min-h-[60px]"
             value={valueInput}
             onChange={(event) => setValueInput(event.target.value)}
             placeholder="my-secret-value"
-            title="Secret value"
-            aria-label="Secret value"
           />
         </div>
         <div className="flex justify-end">
           <button
             type="submit"
             disabled={submitting}
-            className="px-3 py-1 bg-blue-600 text-white rounded text-xs disabled:opacity-60"
+            className="px-4 py-2 bg-primary/20 hover:bg-primary/30 text-primary hover:text-white rounded-lg text-xs font-bold border border-primary/20 transition-all shadow-lg hover:shadow-primary/10 disabled:opacity-50"
           >
-            {submitting ? 'Saving…' : 'Save Secret'}
+            {submitting ? (
+              <><i className="fas fa-circle-notch fa-spin mr-2"></i>Saving...</>
+            ) : (
+              <><i className="fas fa-save mr-2"></i>Save Secret</>
+            )}
           </button>
         </div>
       </form>

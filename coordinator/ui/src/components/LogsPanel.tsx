@@ -44,7 +44,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
 
   const fetchLogs = async () => {
     if (!logsUrl) return;
-    
+
     setIsStreaming(true);
     try {
       const response = await fetch(`${logsUrl}?tail=${tail}`);
@@ -53,10 +53,10 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
         // Parse logs if they're strings
         const parsedLogs = typeof data.logs === 'string'
           ? data.logs.split('\n').map((line: string) => ({
-              timestamp: new Date().toISOString(),
-              level: 'info' as const,
-              message: line
-            }))
+            timestamp: new Date().toISOString(),
+            level: 'info' as const,
+            message: line
+          }))
           : data.logs;
         setLocalLogs(parsedLogs);
       }
@@ -86,21 +86,25 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-      <div className="bg-gray-800 text-white px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <i className="fas fa-terminal"></i>
-          <span className="font-semibold">Console Logs</span>
-          {instanceId && (
-            <span className="text-xs text-gray-400">({instanceId})</span>
-          )}
+    <div className="glass-panel rounded-2xl overflow-hidden border border-white/10 shadow-lg">
+      <div className="bg-black/40 border-b border-white/5 px-6 py-4 flex items-center justify-between backdrop-blur-md">
+        <div className="flex items-center space-x-3">
+          <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center border border-white/5">
+            <i className="fas fa-terminal text-gray-400 text-sm"></i>
+          </div>
+          <div>
+            <span className="font-bold text-gray-200 text-sm tracking-wide uppercase">Console Logs</span>
+            {instanceId && (
+              <div className="text-[10px] text-gray-500 font-mono mt-0.5">{instanceId}</div>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-2">
           {logsUrl && (
             <button
               onClick={fetchLogs}
               disabled={isStreaming}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition disabled:opacity-50"
+              className="glass-button w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white transition-colors"
               title="Refresh logs"
             >
               <i className={`fas fa-sync-alt ${isStreaming ? 'fa-spin' : ''}`}></i>
@@ -108,34 +112,36 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
           )}
           <button
             onClick={downloadLogs}
-            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition"
+            className="glass-button w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white transition-colors"
             title="Download full logs"
           >
             <i className="fas fa-download"></i>
           </button>
         </div>
       </div>
-      
+
       <div
         ref={containerRef}
-        className="bg-gray-900 text-gray-300 p-4 font-mono text-sm overflow-y-auto max-h-96"
+        className="bg-[#0c0c0e]/80 text-gray-300 p-6 font-mono text-xs overflow-y-auto max-h-[500px] custom-scrollbar"
       >
         {localLogs.length === 0 ? (
-          <div className="text-gray-500 text-center py-8">
-            <i className="fas fa-inbox text-3xl mb-2"></i>
+          <div className="text-gray-600 text-center py-16 flex flex-col items-center">
+            <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
+              <i className="fas fa-inbox text-xl opacity-50"></i>
+            </div>
             <p>No logs available</p>
           </div>
         ) : (
           localLogs.map((log, idx) => {
             const config = levelConfig[log.level];
             return (
-              <div key={idx} className="flex items-start space-x-2 mb-1 hover:bg-gray-800 px-2 py-1 rounded">
-                <i className={`fas ${config.icon} ${config.color} mt-1 flex-shrink-0`}></i>
-                <div className="flex-1 break-all">
-                  <span className="text-gray-500 text-xs mr-2">
+              <div key={idx} className="flex items-start space-x-3 mb-1.5 hover:bg-white/5 px-2 py-1 rounded transition-colors group">
+                <i className={`fas ${config.icon} ${config.color} mt-0.5 flex-shrink-0 opacity-70 group-hover:opacity-100 transition-opacity`}></i>
+                <div className="flex-1 break-all leading-relaxed">
+                  <span className="text-gray-600 text-[10px] mr-3 select-none inline-block min-w-[60px]">
                     {new Date(log.timestamp).toLocaleTimeString()}
                   </span>
-                  <span className={log.level === 'error' ? 'text-red-400' : 'text-gray-300'}>
+                  <span className={`${log.level === 'error' ? 'text-red-400' : log.level === 'warning' ? 'text-amber-400' : 'text-gray-300'} font-medium`}>
                     {log.message}
                   </span>
                 </div>
@@ -145,10 +151,11 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
         )}
         <div ref={logsEndRef} />
       </div>
-      
+
       {localLogs.length > 0 && (
-        <div className="bg-gray-800 px-4 py-2 text-xs text-gray-400 border-t border-gray-700">
-          Showing {localLogs.length} log entries (tail: {tail})
+        <div className="bg-black/60 px-6 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-semibold border-t border-white/5 flex justify-between">
+          <span>Total Entries: {localLogs.length}</span>
+          <span>Tail: {tail}</span>
         </div>
       )}
     </div>

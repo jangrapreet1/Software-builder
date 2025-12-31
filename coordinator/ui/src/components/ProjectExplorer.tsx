@@ -156,10 +156,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
   }, []);
 
   useEffect(() => {
-    try { if (selectedBackend) localStorage.setItem('sb_pref_backend', selectedBackend); } catch {}
+    try { if (selectedBackend) localStorage.setItem('sb_pref_backend', selectedBackend); } catch { }
   }, [selectedBackend]);
   useEffect(() => {
-    try { if (selectedFrontend) localStorage.setItem('sb_pref_frontend', selectedFrontend); } catch {}
+    try { if (selectedFrontend) localStorage.setItem('sb_pref_frontend', selectedFrontend); } catch { }
   }, [selectedFrontend]);
 
   const refreshInProgress = useCallback(async () => {
@@ -235,9 +235,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
 
         const st = (data?.status ?? '').toLowerCase();
         if (st === 'success' || st === 'failed' || st === 'error' || (data?.progress ?? 0) >= 100) {
-          try { ws.close(); } catch {}
+          try { ws.close(); } catch { }
           setWsConnection(null);
-          try { localStorage.removeItem('sb_active_build_id'); } catch {}
+          try { localStorage.removeItem('sb_active_build_id'); } catch { }
           refreshInProgress();
         }
       };
@@ -342,7 +342,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
           current_step: 'Starting build...',
           logs: []
         });
-        try { localStorage.setItem('sb_active_build_id', result.build_id); } catch {}
+        try { localStorage.setItem('sb_active_build_id', result.build_id); } catch { }
       }
       fetchProjects();
       refreshInProgress();
@@ -366,7 +366,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
         current_step: data.current_step || '',
         logs: Array.isArray(data.logs) ? data.logs : []
       });
-      try { localStorage.setItem('sb_active_build_id', buildId); } catch {}
+      try { localStorage.setItem('sb_active_build_id', buildId); } catch { }
     } catch (e) {
       await refreshInProgress();
     }
@@ -380,7 +380,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
       if (!res.ok) throw new Error(`Failed to stop build (status ${res.status})`);
       if (buildProgress?.build_id === buildId) {
         setBuildProgress(null);
-        try { localStorage.removeItem('sb_active_build_id'); } catch {}
+        try { localStorage.removeItem('sb_active_build_id'); } catch { }
       }
       await refreshInProgress();
     } catch (e) {
@@ -389,44 +389,47 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
   };
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-8">
-      <section className="bg-white rounded-lg shadow-lg p-6">
-        <div className="grid gap-8 xl:grid-cols-[minmax(0,_2fr)_minmax(0,_1fr)]">
-          <div className="space-y-6">
+    <div className="space-y-8 py-2">
+      <section className="glass-panel rounded-2xl p-8 relative overflow-hidden">
+        {/* Decorative background element */}
+        <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-primary/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div className="grid gap-12 xl:grid-cols-[minmax(0,_2fr)_minmax(0,_1fr)] relative">
+          <div className="space-y-8">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">Request a New Project</h2>
-              <p className="text-gray-600">Describe the project you want and let the enhanced workflow build it for you.</p>
+              <h2 className="text-3xl font-bold text-white mb-2">Request a New Project</h2>
+              <p className="text-gray-400 text-lg">Describe the project you want and let the enhanced workflow build it for you.</p>
             </div>
 
-            <form className="space-y-6" onSubmit={handleSubmit}>
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">Project Description</label>
+            <form className="space-y-8" onSubmit={handleSubmit}>
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-gray-300 uppercase tracking-wide">Project Description</label>
                 <textarea
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
-                  className="w-full min-h-[120px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full min-h-[160px] px-6 py-4 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all text-base leading-relaxed resize-none"
                   placeholder="Build a task management app with authentication and a dashboard..."
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-gray-700">Project Name (optional)</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-300 uppercase tracking-wide">Project Name (optional)</label>
                   <input
                     type="text"
                     value={projectName}
                     onChange={(event) => setProjectName(event.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-5 py-3 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all"
                     placeholder="my-awesome-project"
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-gray-700">Requirements (optional)</label>
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-300 uppercase tracking-wide">Requirements (optional)</label>
                   <textarea
                     value={requirementsText}
                     onChange={(event) => setRequirementsText(event.target.value)}
-                    className="w-full min-h-[80px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="w-full min-h-[50px] px-5 py-3 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all"
                     placeholder="authentication, dashboard, notifications"
                   />
                   <p className="text-xs text-gray-500">Separate requirements with commas or new lines.</p>
@@ -434,91 +437,115 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
               </div>
 
               {submissionError && (
-                <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {submissionError}
+                <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-6 py-4 text-sm text-red-200">
+                  <div className="flex items-center space-x-2">
+                    <i className="fas fa-exclamation-circle text-red-400"></i>
+                    <span>{submissionError}</span>
+                  </div>
                 </div>
               )}
 
               {buildResult && (
-                <div className="rounded-md bg-green-50 px-4 py-3 text-sm text-green-800 space-y-1">
-                  <p className="font-semibold">Build request submitted successfully.</p>
-                  {buildResult.build_id && <p>Build ID: {buildResult.build_id}</p>}
-                  {buildResult.message && <p>{buildResult.message}</p>}
-                  {buildResult.source_path && <p>Source: {buildResult.source_path}</p>}
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-6 py-4 text-sm text-emerald-100 space-y-2">
+                  <div className="flex items-center space-x-2 font-semibold text-emerald-400">
+                    <i className="fas fa-check-circle"></i>
+                    <p>Build request submitted successfully.</p>
+                  </div>
+                  {buildResult.build_id && <p className="pl-6 opacity-80">Build ID: <span className="font-mono">{buildResult.build_id}</span></p>}
+                  {buildResult.message && <p className="pl-6 opacity-80">{buildResult.message}</p>}
+                  {buildResult.source_path && <p className="pl-6 opacity-80">Source: {buildResult.source_path}</p>}
                 </div>
               )}
 
-              <div className="flex justify-end">
+              <div className="flex justify-end pt-2">
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="bg-blue-600 hover:bg-blue-700 disabled:hover:bg-blue-600 disabled:opacity-60 text-white font-semibold px-6 py-2 rounded-lg transition"
+                  className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-lg shadow-primary/25 transition-all transform hover:scale-105 flex items-center space-x-2"
                 >
-                  {isSubmitting ? 'Submitting...' : 'Submit Build Request'}
+                  {isSubmitting ? (
+                    <>
+                      <i className="fas fa-circle-notch fa-spin"></i>
+                      <span>Submitting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="fas fa-magic"></i>
+                      <span>Generate Project</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
           </div>
 
-          <div className="space-y-4">
-            <div className="rounded-md border border-gray-200 p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-gray-800">Tech Stack</h3>
-                {loadingStack && (<span className="text-xs text-gray-500">Loading...</span>)}
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Tech Stack</h3>
+                {loadingStack && (<span className="text-xs text-gray-500 animate-pulse">Loading...</span>)}
               </div>
               {stackError && (
-                <div className="rounded bg-red-50 text-red-700 text-xs px-2 py-1 mb-2">{stackError}</div>
+                <div className="rounded bg-red-500/20 text-red-200 text-xs px-3 py-2 mb-4">{stackError}</div>
               )}
-              <div className="space-y-3">
+              <div className="space-y-5">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Backend</label>
-                  <select
-                    value={selectedBackend}
-                    onChange={(e) => setSelectedBackend(e.target.value)}
-                    className="w-full px-2 py-2 border border-gray-300 rounded-md"
-                    title="Select backend framework"
-                  >
-                    {backendOptions.map((fw) => (
-                      <option key={fw.id} value={fw.id}>{fw.name} · {fw.language.toUpperCase()}</option>
-                    ))}
-                  </select>
+                  <label className="block text-xs font-medium text-gray-400 mb-2">Backend Framework</label>
+                  <div className="relative">
+                    <select
+                      value={selectedBackend}
+                      onChange={(e) => setSelectedBackend(e.target.value)}
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl appearance-none text-white focus:ring-2 focus:ring-primary/50 outline-none"
+                    >
+                      {backendOptions.map((fw) => (
+                        <option key={fw.id} value={fw.id} className="bg-slate-900">{fw.name} ({fw.language})</option>
+                      ))}
+                    </select>
+                    <i className="fas fa-chevron-down absolute right-4 top-4 text-gray-500 pointer-events-none"></i>
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Frontend</label>
-                  <select
-                    value={selectedFrontend}
-                    onChange={(e) => setSelectedFrontend(e.target.value)}
-                    className="w-full px-2 py-2 border border-gray-300 rounded-md"
-                    title="Select frontend framework"
-                  >
-                    {frontendOptions.map((fw) => (
-                      <option key={fw.id} value={fw.id}>{fw.name} · {fw.language.toUpperCase()}</option>
-                    ))}
-                  </select>
+                  <label className="block text-xs font-medium text-gray-400 mb-2">Frontend Framework</label>
+                  <div className="relative">
+                    <select
+                      value={selectedFrontend}
+                      onChange={(e) => setSelectedFrontend(e.target.value)}
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl appearance-none text-white focus:ring-2 focus:ring-primary/50 outline-none"
+                    >
+                      {frontendOptions.map((fw) => (
+                        <option key={fw.id} value={fw.id} className="bg-slate-900">{fw.name} ({fw.language})</option>
+                      ))}
+                    </select>
+                    <i className="fas fa-chevron-down absolute right-4 top-4 text-gray-500 pointer-events-none"></i>
+                  </div>
                 </div>
               </div>
             </div>
-            <div className="space-y-3">
+
+            <div className="space-y-4">
               {inProgressError && (
-                <div className="rounded-md bg-yellow-50 px-4 py-3 text-sm text-yellow-800">{inProgressError}</div>
+                <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 text-sm text-amber-200">{inProgressError}</div>
               )}
               {(!loadingInProgress && inProgressBuilds.length > 0) && (
-                <div className="rounded-md border border-gray-200 p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-gray-800">In-Progress Builds</h3>
-                    <button onClick={refreshInProgress} className="text-sm text-blue-600 hover:text-blue-700">Refresh</button>
+                <div className="rounded-2xl border border-white/10 p-6 bg-white/5 backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-bold text-gray-200 uppercase tracking-wider">In-Progress Builds</h3>
+                    <button onClick={refreshInProgress} className="text-xs text-primary hover:text-primary-foreground transition-colors"><i className="fas fa-sync-alt mr-1"></i>Refresh</button>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {inProgressBuilds.map((b) => (
-                      <div key={b.build_id} className="flex items-center justify-between text-sm">
-                        <div className="truncate mr-2">
-                          <span className="text-gray-900 font-medium">{inProgressLabels[b.build_id] || b.build_id}</span>
-                          <span className="ml-2 font-mono text-gray-500">({b.build_id})</span>
-                          <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">{b.status}</span>
+                      <div key={b.build_id} className="flex items-center justify-between text-sm bg-black/20 p-3 rounded-lg border border-white/5">
+                        <div className="truncate mr-2 flex-1">
+                          <div className="text-white font-medium truncate">{inProgressLabels[b.build_id] || b.build_id}</div>
+                          <div className="flex items-center text-xs text-gray-500 mt-1">
+                            <span className="font-mono bg-white/10 px-1.5 rounded mr-2">{b.build_id.substring(0, 8)}...</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wider ${b.status === 'building' ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-500/20 text-gray-400'
+                              }`}>{b.status}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <button onClick={() => handleResume(b.build_id)} className="text-blue-600 hover:text-blue-800">Show Progress</button>
-                          <button onClick={() => handleStopBuild(b.build_id)} className="text-red-600 hover:text-red-700">Stop</button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => handleResume(b.build_id)} className="glass-button w-8 h-8 rounded-full text-blue-400 flex items-center justify-center p-0" title="View"><i className="fas fa-eye"></i></button>
+                          <button onClick={() => handleStopBuild(b.build_id)} className="glass-button w-8 h-8 rounded-full text-red-400 flex items-center justify-center p-0" title="Stop"><i className="fas fa-trash"></i></button>
                         </div>
                       </div>
                     ))}
@@ -527,49 +554,50 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
               )}
             </div>
             {frameworksError && (
-              <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">
+              <div className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300 border border-red-500/20">
                 {frameworksError}
               </div>
             )}
-            {/* Controls removed as requested */}
           </div>
         </div>
       </section>
 
       {buildProgress && (
-        <section className="bg-white rounded-lg shadow-lg p-6">
-          <div className="flex items-center justify-between mb-4">
+        <section className="glass-panel rounded-2xl p-8 animate-fade-in border border-primary/20 shadow-lg shadow-primary/5">
+          <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="text-lg font-bold text-gray-900">Build Progress</h3>
-              <div className="text-xs text-gray-600 mt-0.5">
+              <h3 className="text-xl font-bold text-white flex items-center gap-3">
+                <i className="fas fa-hard-hat text-amber-400 animate-pulse"></i>
+                Build Progress
+              </h3>
+              <div className="text-sm text-gray-400 mt-1 pl-8">
                 {(inProgressLabels[buildProgress.build_id] || buildProgress.build_id)}
-                <span className="ml-1 text-gray-400">({buildProgress.build_id})</span>
+                <span className="ml-2 font-mono text-gray-600">({buildProgress.build_id})</span>
               </div>
             </div>
-            <span className="text-sm text-gray-600">{buildProgress.progress}%</span>
+            <span className="text-2xl font-bold text-primary">{buildProgress.progress}%</span>
           </div>
-          <p className="text-sm text-gray-600 mb-4">{buildProgress.current_step}</p>
-          <div className="mb-6">
-            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+          <p className="text-sm text-gray-300 mb-4 font-mono pl-1"><i className="fas fa-terminal mr-2 text-gray-500"></i>{buildProgress.current_step}</p>
+          <div className="mb-8 p-1 bg-black/30 rounded-full border border-white/5">
+            <div className="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
               <div
                 ref={progressBarRef}
-                className={`h-full ${getProgressColor(buildProgress.progress)} transition-all duration-500`}
+                className={`h-full ${getProgressColor(buildProgress.progress)} transition-all duration-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]`}
               />
             </div>
           </div>
           {Array.isArray(buildProgress.logs) && buildProgress.logs.length > 0 && (
-            <div className="bg-gray-900 rounded-lg p-4 max-h-56 overflow-y-auto">
-              {buildProgress.logs.slice(-10).map((log, idx) => (
-                <div key={idx} className="text-sm font-mono">
-                  <span className="text-gray-500 text-xs">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                  <span className={`ml-2 ${
-                    log.level === 'error' ? 'text-red-400' :
+            <div className="bg-black/80 rounded-xl p-6 max-h-[300px] overflow-y-auto border border-white/10 font-mono text-xs custom-scrollbar">
+              {buildProgress.logs.slice(-15).map((log, idx) => (
+                <div key={idx} className="mb-1.5 last:mb-0 break-all">
+                  <span className="text-gray-600 mr-3 select-none">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  <span className={`font-bold mr-3 ${log.level === 'error' ? 'text-red-400' :
                     log.level === 'warning' ? 'text-yellow-400' :
-                    'text-green-400'
-                  }`}>
+                      'text-emerald-400'
+                    }`}>
                     [{(log.level || 'info').toUpperCase()}]
                   </span>
-                  <span className="text-gray-300 ml-2">{log.message}</span>
+                  <span className="text-gray-300">{log.message}</span>
                 </div>
               ))}
             </div>
@@ -577,23 +605,24 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
         </section>
       )}
 
-      <section className="bg-white rounded-lg shadow-lg p-6 space-y-6">
+      <section className="glass-panel rounded-2xl p-8 space-y-8">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Generated Projects</h2>
-            <p className="text-gray-600">Projects stored under the generated directory.</p>
+            <h2 className="text-2xl font-bold text-white">Generated Projects</h2>
+            <p className="text-gray-400">Projects stored under the generated directory.</p>
           </div>
           <button
             onClick={fetchProjects}
             disabled={isLoadingProjects}
-            className="bg-gray-900 hover:bg-gray-700 disabled:opacity-60 text-white font-semibold px-4 py-2 rounded-lg transition"
+            className="glass-button bg-white/5 hover:bg-white/10 text-white font-semibold px-6 py-2.5 rounded-xl flex items-center space-x-2"
           >
-            {isLoadingProjects ? 'Refreshing...' : 'Refresh'}
+            <i className={`fas fa-sync-alt ${isLoadingProjects ? 'fa-spin' : ''}`}></i>
+            <span>{isLoadingProjects ? 'Refreshing...' : 'Refresh'}</span>
           </button>
         </div>
 
         {projectsError && (
-          <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-6 py-4 text-sm text-red-200">
             {projectsError}
           </div>
         )}
@@ -602,41 +631,43 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
           {projects.map((project) => (
             <div
               key={project.path}
-              className="border border-gray-200 rounded-lg p-5 space-y-3 hover:shadow-md hover:border-blue-300 cursor-pointer transition"
+              className="group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-primary/30 rounded-2xl p-6 space-y-4 cursor-pointer transition-all duration-300 hover:shadow-xl hover:shadow-primary/10 relative overflow-hidden"
               onClick={() => onOpenEditor(project.path)}
               title="Open in Editor"
             >
+              <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                <i className="fas fa-external-link-alt text-gray-400"></i>
+              </div>
+
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
-                <p className="text-sm text-gray-500 break-all">{project.path}</p>
+                <h3 className="text-xl font-bold text-white mb-1 group-hover:text-primary transition-colors">{project.name}</h3>
+                <p className="text-xs text-gray-500 font-mono break-all truncate">{project.path}</p>
               </div>
-              <div className="text-sm text-gray-600 space-y-1">
-                <p>Created: {formatTimestamp(project.created_at)}</p>
-                <p>Updated: {formatTimestamp(project.updated_at)}</p>
-              </div>
-              <div className="flex items-center space-x-2 text-sm">
-                <span className={`${project.has_backend ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'} px-3 py-1 rounded-full`}>
-                  Backend
+
+              <div className="py-2 flex items-center space-x-2">
+                <span className={`text-xs px-3 py-1 rounded-full border ${project.has_backend ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' : 'bg-gray-500/10 text-gray-500 border-gray-500/20'}`}>
+                  {project.has_backend ? <><i className="fas fa-check mr-1"></i>Backend</> : 'No Backend'}
                 </span>
-                <span className={`${project.has_frontend ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'} px-3 py-1 rounded-full`}>
-                  Frontend
+                <span className={`text-xs px-3 py-1 rounded-full border ${project.has_frontend ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' : 'bg-gray-500/10 text-gray-500 border-gray-500/20'}`}>
+                  {project.has_frontend ? <><i className="fas fa-check mr-1"></i>Frontend</> : 'No Frontend'}
                 </span>
               </div>
-              <div className="pt-2">
-                <button
-                  onClick={(e) => { e.stopPropagation(); onOpenEditor(project.path); }}
-                  className="text-blue-600 hover:text-blue-800 text-sm"
-                >
-                  Open in Editor
-                </button>
+
+              <div className="pt-3 border-t border-white/5 flex items-center justify-between text-xs text-gray-500">
+                <span><i className="far fa-clock mr-1"></i>{formatTimestamp(project.created_at)}</span>
+                <span className="text-primary font-medium opacity-0 group-hover:opacity-100 transition-opacity">Open Project &rarr;</span>
               </div>
             </div>
           ))}
         </div>
 
         {!isLoadingProjects && projects.length === 0 && !projectsError && (
-          <div className="text-center text-gray-500 text-sm">
-            No generated projects found. Submit a build request to create one.
+          <div className="text-center py-12 bg-white/5 rounded-2xl border border-dashed border-white/10">
+            <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
+              <i className="fas fa-folder-open text-2xl text-gray-500"></i>
+            </div>
+            <p className="text-gray-400">No generated projects found.</p>
+            <p className="text-sm text-gray-600 mt-1">Submit a build request above to create one.</p>
           </div>
         )}
       </section>

@@ -39,52 +39,41 @@ export const LivePreview: React.FC<LivePreviewProps> = ({
   if (!canIframe) {
     // Open in new tab for non-localhost or when iframe is not safe
     return (
-      <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-        <div className="mb-4">
-          <i className="fas fa-external-link-alt text-4xl text-blue-500"></i>
-        </div>
-        <h3 className="text-xl font-semibold mb-4">Preview Available</h3>
-        <p className="text-gray-600 mb-6">
-          For security reasons, this preview will open in a new tab.
-        </p>
-        <a
-          href={newTabUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition"
-        >
-          Open Preview <i className="fas fa-arrow-right ml-2"></i>
-        </a>
-        <div className="mt-4 text-sm text-gray-500">
-          Instance ID: {instanceId}
+      <div className="flex items-center justify-center h-[500px]">
+        <div className="glass-panel rounded-2xl p-10 text-center max-w-lg mx-auto border border-white/10 bg-white/5">
+          <div className="mb-6 relative">
+            <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full"></div>
+            <div className="relative w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-blue-500/25">
+              <i className="fas fa-external-link-alt text-3xl text-white"></i>
+            </div>
+          </div>
+          <h3 className="text-2xl font-bold mb-3 text-white">Preview Available</h3>
+          <p className="text-gray-400 mb-8 leading-relaxed">
+            For security reasons, this application preview must be opened in a new separate window.
+          </p>
+          <a
+            href={newTabUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group inline-flex items-center bg-white text-gray-900 hover:bg-gray-100 font-bold py-3 px-8 rounded-xl transition-all shadow-lg shadow-white/10 hover:shadow-white/20 transform hover:-translate-y-0.5"
+          >
+            <span>Open Preview</span>
+            <i className="fas fa-arrow-right ml-2 group-hover:translate-x-1 transition-transform"></i>
+          </a>
+          <div className="mt-6 text-xs text-gray-500 font-mono">
+            Instance ID: {instanceId}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-      <div className="bg-gray-100 px-4 py-2 flex items-center justify-between border-b">
-        <div className="flex items-center space-x-2">
-          <i className="fas fa-globe text-blue-500"></i>
-          <span className="text-sm font-medium text-gray-700">Live Preview</span>
-        </div>
-        <div className="flex items-center space-x-4">
-          <span className="text-xs text-gray-500">Instance: {instanceId}</span>
-          <a
-            href={newTabUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-blue-600 hover:text-blue-700"
-          >
-            <i className="fas fa-external-link-alt"></i>
-          </a>
-        </div>
-      </div>
+    <div className="w-full h-full bg-white">
       <iframe
         ref={iframeRef}
         src={frameUrl}
-        className="w-full h-[600px]"
+        className="w-full h-[600px] border-none"
         title="Application Preview"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox"
       />

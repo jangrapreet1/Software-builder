@@ -208,66 +208,66 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
   return (
     <div className="space-y-6">
       {/* Configuration Panel */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
-          <i className="fas fa-cog mr-2 text-blue-600"></i>
+      <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
+        <h3 className="text-xl font-bold text-white mb-6 flex items-center">
+          <i className="fas fa-magic mr-3 text-primary animate-pulse-slow"></i>
           Problem Resolver Configuration
         </h3>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">
               Build Commands
             </label>
             <input
               type="text"
               value={buildCommands}
               onChange={(e) => setBuildCommands(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-5 py-3 bg-black/40 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-600 outline-none transition-all font-mono text-sm"
               placeholder="npm install && npm run build"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">
               Test Commands (Optional)
             </label>
             <input
               type="text"
               value={testCommands}
               onChange={(e) => setTestCommands(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-5 py-3 bg-black/40 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-600 outline-none transition-all font-mono text-sm"
               placeholder="npm test"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">
               Run Mode
             </label>
-            <div className="flex space-x-4">
-              <label className="flex items-center">
+            <div className="flex space-x-6 p-4 bg-white/5 rounded-xl border border-white/10">
+              <label className="flex items-center cursor-pointer group">
                 <input
                   type="radio"
                   value="diagnose-only"
                   checked={runMode === 'diagnose-only'}
                   onChange={(e) => setRunMode(e.target.value as any)}
-                  className="mr-2"
+                  className="mr-3 w-4 h-4 text-primary bg-gray-700 border-gray-500 focus:ring-primary focus:ring-offset-0"
                 />
-                <span className="text-sm">Diagnose Only</span>
+                <span className="text-sm font-medium text-gray-200 group-hover:text-white transition-colors">Diagnose Only</span>
               </label>
-              <label className="flex items-center">
+              <label className="flex items-center cursor-pointer group">
                 <input
                   type="radio"
                   value="attempt-fix"
                   checked={runMode === 'attempt-fix'}
                   onChange={(e) => setRunMode(e.target.value as any)}
-                  className="mr-2"
+                  className="mr-3 w-4 h-4 text-primary bg-gray-700 border-gray-500 focus:ring-primary focus:ring-offset-0"
                 />
-                <span className="text-sm">Attempt Fix</span>
+                <span className="text-sm font-medium text-gray-200 group-hover:text-white transition-colors">Attempt Fix</span>
               </label>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-gray-500 mt-2 pl-1">
               {runMode === 'diagnose-only'
                 ? 'Only detect and report issues without making changes'
                 : 'Attempt to automatically fix low-risk issues'}
@@ -277,11 +277,11 @@ export const EnhancedProblemResolverPanel: React.FC<EnhancedProblemResolverPanel
           <button
             onClick={handleDiagnose}
             disabled={isAnalyzing}
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center"
+            className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 px-6 rounded-xl shadow-lg shadow-primary/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center"
           >
             {isAnalyzing ? (
               <>
-                <i className="fas fa-spinner fa-spin mr-2"></i>
+                <i className="fas fa-circle-notch fa-spin mr-2"></i>
                 Analyzing...
               </>
             ) : (

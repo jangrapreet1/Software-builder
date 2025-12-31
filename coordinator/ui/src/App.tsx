@@ -57,7 +57,7 @@ const App: React.FC = () => {
         try {
           const response = await fetch(`/api/sandbox/${instance.instanceId}/status`);
           const data = await response.json();
-          
+
           setInstance(prev => ({
             ...prev,
             status: data.status === 'running' ? 'running' : 'error',
@@ -77,7 +77,7 @@ const App: React.FC = () => {
   const handleDetect = async () => {
     try {
       setInstance(prev => ({ ...prev, status: 'detected', progress: 10 }));
-      
+
       const response = await fetch('/api/repo/detect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,7 +85,7 @@ const App: React.FC = () => {
       });
 
       const data = await response.json();
-      
+
       if (data.status === 'success') {
         setInstance(prev => ({
           ...prev,
@@ -141,7 +141,7 @@ const App: React.FC = () => {
       });
 
       if (response.status === 403 && !permitted) {
-        const data = await response.json().catch(()=>({message:'Permission denied'}));
+        const data = await response.json().catch(() => ({ message: 'Permission denied' }));
         addNotification({ type: 'warning', title: 'Permission Required', message: data.message || 'Grant permission to run', duration: 4000 });
         setInstance(prev => ({ ...prev, status: 'detected' }));
         return;
@@ -315,282 +315,313 @@ const App: React.FC = () => {
 
   const previewActive = Boolean(instance.previewUrl && instance.instanceId);
   const previewStatusLabel = previewActive ? 'Live' : 'Not Running';
-  const previewStatusClass = previewActive
-    ? 'bg-green-100 text-green-700 border border-green-200'
-    : 'bg-gray-100 text-gray-600 border border-gray-200';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <nav className="bg-blue-600 text-white shadow-lg">
-        <div className="container mx-auto px-4 py-4">
+    <div className="min-h-screen text-foreground font-sans selection:bg-primary/30">
+      {/* Navbar */}
+      <nav className="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-white/5 mx-4 mt-4 rounded-2xl">
+        <div className="container mx-auto px-6 py-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-            <div className="flex items-center space-x-3">
-              <i className="fas fa-robot text-3xl"></i>
+            <div className="flex items-center space-x-4">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                <i className="fas fa-robot text-white text-xl"></i>
+              </div>
               <div>
-                <h1 className="text-2xl font-bold">Autonomous App Builder</h1>
-                <p className="text-blue-100 text-sm">Live Preview & Project Explorer</p>
+                <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+                  Autonomous Builder
+                </h1>
+                <p className="text-xs text-gray-400 font-medium tracking-wide">COORDINATOR DASHBOARD</p>
               </div>
             </div>
-            <div className="flex items-center space-x-2 bg-blue-500 rounded-full px-2 py-1">
+
+            <div className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5 backdrop-blur-sm">
               <button
-                className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
-                  activePage === 'live-preview' ? 'bg-white text-blue-600 shadow' : 'text-white hover:bg-blue-400'
-                }`}
+                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'live-preview'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                 onClick={() => setActivePage('live-preview')}
               >
-                Live Preview
+                <i className="fas fa-play-circle mr-2"></i>Live Preview
               </button>
               <button
-                className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
-                  activePage === 'problem-resolver' ? 'bg-white text-blue-600 shadow' : 'text-white hover:bg-blue-400'
-                }`}
+                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'problem-resolver'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                 onClick={() => setActivePage('problem-resolver')}
               >
-                Problem Resolver
+                <i className="fas fa-wrench mr-2"></i>Resolver
               </button>
               <button
-                className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
-                  activePage === 'project-explorer' ? 'bg-white text-blue-600 shadow' : 'text-white hover:bg-blue-400'
-                }`}
+                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'project-explorer'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                 onClick={() => setActivePage('project-explorer')}
               >
-                Project Explorer
+                <i className="fas fa-folder-open mr-2"></i>Explorer
               </button>
               <button
-                className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
-                  activePage === 'editor' ? 'bg-white text-blue-600 shadow' : 'text-white hover:bg-blue-400'
-                }`}
+                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'editor'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                 onClick={() => setActivePage('editor')}
               >
-                Editor
+                <i className="fas fa-code mr-2"></i>Editor
               </button>
-              
             </div>
           </div>
         </div>
       </nav>
 
-      {/* Notification System */}
-      <NotificationSystem
-        notifications={notifications}
-        onDismiss={dismissNotification}
-      />
+      {/* Main Content */}
+      <main className="container mx-auto px-4 pt-32 pb-12">
+        <NotificationSystem
+          notifications={notifications}
+          onDismiss={dismissNotification}
+        />
 
-      {activePage === 'project-explorer' ? (
-        <ErrorBoundary>
-          <ProjectExplorer
-            frameworksError={null}
-            onOpenEditor={(projectPath: string) => {
-              setAppPath(projectPath);
-              setActivePage('editor');
-            }}
-          />
-        </ErrorBoundary>
-      ) : activePage === 'problem-resolver' ? (
-        <ErrorBoundary>
-          <div className="container mx-auto px-4 py-8">
-          <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Application Path
-            </label>
-            <input
-              type="text"
-              value={appPath}
-              onChange={(e) => setAppPath(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="./generated/my-app"
-            />
-          </div>
-          <EnhancedProblemResolverPanel
-            appPath={appPath}
-            onNotification={(type, title, message) => {
-              addNotification({
-                type,
-                title,
-                message,
-                duration: 5000
-              });
-            }}
-          />
-        </div>
-        </ErrorBoundary>
-      ) : activePage === 'editor' ? (
-        <ErrorBoundary>
-          <div className="container mx-auto px-4 py-8">
-            <div className="bg-white rounded-lg shadow-lg p-6 mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Project Root
-              </label>
-              <input
-                type="text"
-                value={appPath}
-                onChange={(e) => setAppPath(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="./generated/my-app"
+        {activePage === 'project-explorer' ? (
+          <ErrorBoundary>
+            <div className="animate-fade-in text-gray-800">
+              {/* Wrapper div to give some context if ProjectExplorer uses white background internally, usually it does, but we will fix that next */}
+              <ProjectExplorer
+                frameworksError={null}
+                onOpenEditor={(projectPath: string) => {
+                  setAppPath(projectPath);
+                  setActivePage('editor');
+                }}
               />
             </div>
-            <EditorPanel root={appPath} />
-          </div>
-        </ErrorBoundary>
-      ) : (
-        <ErrorBoundary>
-        <div className="container mx-auto px-4 py-8">
-          {/* App Path Input */}
-          <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Application Path
-            </label>
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                value={appPath}
-                onChange={(e) => setAppPath(e.target.value)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="./generated/my-app"
+          </ErrorBoundary>
+        ) : activePage === 'problem-resolver' ? (
+          <ErrorBoundary>
+            <div className="animate-fade-in max-w-5xl mx-auto">
+              <div className="glass-panel rounded-2xl p-8 mb-8">
+                <label className="block text-sm font-medium text-gray-300 mb-3">
+                  Application Path
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={appPath}
+                    onChange={(e) => setAppPath(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all"
+                    placeholder="./generated/my-app"
+                  />
+                  <i className="fas fa-folder absolute left-3.5 top-3.5 text-gray-500"></i>
+                </div>
+              </div>
+              <EnhancedProblemResolverPanel
+                appPath={appPath}
+                onNotification={(type, title, message) => {
+                  addNotification({
+                    type,
+                    title,
+                    message,
+                    duration: 5000
+                  });
+                }}
               />
-              <button
-                onClick={handleDetect}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg transition"
-              >
-                <i className="fas fa-search mr-2"></i>
-                Detect
-              </button>
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left Column - Status & Tools */}
-            <div className="space-y-8">
-              <StatusIndicator
-                status={instance.status}
-                progress={instance.progress}
-                currentStep={instance.currentStep}
-                logsUrl={instance.logsUrl}
-              />
-
-              {/* Permissions Stats */}
-              <PermissionsStatsPanel />
-
-              {/* Session Context Panel */}
-              {instance.sessionToken && (
-                <SessionContextPanel
-                  sessionToken={instance.sessionToken}
-                />
-              )}
-
-              {/* Problem Resolver & Testing removed from Live Preview tab */}
+          </ErrorBoundary>
+        ) : activePage === 'editor' ? (
+          <ErrorBoundary>
+            <div className="animate-fade-in h-[calc(100vh-160px)] flex flex-col">
+              <div className="glass-panel rounded-xl p-4 mb-4 flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-gray-300">
+                  <i className="fas fa-code-branch text-primary"></i>
+                  <span className="text-sm font-mono">{appPath}</span>
+                </div>
+              </div>
+              <div className="flex-1 rounded-2xl overflow-hidden glass-panel border-0 shadow-2xl">
+                <EditorPanel root={appPath} />
+              </div>
             </div>
-
-            {/* Right Column - Preview & Logs */}
-            <div className="lg:col-span-2 space-y-8">
-              <div className="bg-white/80 backdrop-blur rounded-2xl border-2 border-blue-100 shadow-xl overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-blue-100 bg-gradient-to-r from-blue-50 to-blue-100">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-700 flex items-center justify-center">
-                      <i className="fas fa-display text-lg"></i>
+          </ErrorBoundary>
+        ) : (
+          <ErrorBoundary>
+            <div className="animate-fade-in space-y-8">
+              {/* Controls Bar */}
+              <div className="glass-panel rounded-2xl p-6 flex flex-col md:flex-row md:items-center gap-6">
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wider">
+                    Target Application
+                  </label>
+                  <div className="flex space-x-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={appPath}
+                        onChange={(e) => setAppPath(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all font-mono text-sm"
+                        placeholder="./generated/my-app"
+                      />
+                      <i className="fas fa-search absolute left-3.5 top-3 text-gray-500"></i>
                     </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-blue-900">Live Preview</h3>
-                      <p className="text-xs text-blue-700 opacity-80">Interact with the running application instance</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs font-semibold tracking-wide px-3 py-1 rounded-full ${previewStatusClass}`}>
-                      {previewStatusLabel}
-                    </span>
-                    <button onClick={handleRun} disabled={resolverRunning || autoRetryActive} className="px-3 py-1 rounded bg-green-600 text-white text-sm disabled:opacity-50 hover:bg-green-700"><i className="fas fa-play mr-1"></i>Run</button>
-                    <button onClick={startResolverAndRerun} disabled={resolverRunning} className="px-3 py-1 rounded bg-amber-600 text-white text-sm disabled:opacity-50 hover:bg-amber-700"><i className="fas fa-wrench mr-1"></i>Diagnose</button>
-                    <button onClick={handleDeploy} disabled={!previewActive} className="px-3 py-1 rounded bg-indigo-600 text-white text-sm disabled:opacity-50 hover:bg-indigo-700"><i className="fas fa-cloud-upload-alt mr-1"></i>Deploy</button>
-                    <button onClick={handleStop} disabled={!instance.instanceId} className="px-3 py-1 rounded bg-red-600 text-white text-sm disabled:opacity-50 hover:bg-red-700"><i className="fas fa-stop mr-1"></i>Stop</button>
                   </div>
                 </div>
-                <div className="relative p-6 bg-gradient-to-br from-slate-50 via-white to-slate-100 min-h-[360px] flex items-center justify-center">
-                  {previewActive ? (
-                    <div className="w-full">
-                      <LivePreview
-                        previewUrl={instance.previewUrl as string}
-                        openUrl={(instance.rawPreviewUrl || instance.previewUrl) as string}
-                        sessionToken={instance.sessionToken}
-                        instanceId={instance.instanceId as string}
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-full h-[360px] flex items-center justify-center">
-                      <div className="text-center text-gray-600 space-y-3 opacity-90">
-                        <i className="fas fa-robot text-4xl text-gray-400"></i>
-                        <div className="text-sm">
-                          {resolverRunning ? (
-                            <>
-                              <div className="font-semibold">Agents are working...</div>
-                              <div className="text-xs">Status: {resolverStatus}</div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="font-medium">Application is not running.</div>
-                              <div className="text-xs">Click Run to start the sandbox. If issues occur, agents will attempt fixes automatically and re-run.</div>
-                            </>
-                          )}
-                        </div>
-                        {lastRunError && (
-                          <div className="max-w-xl mx-auto bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded">
-                            {lastRunError}
-                          </div>
-                        )}
-                        {autoRetryActive && nextRetryAt && (
-                          <div className="text-xs text-gray-500">Auto-retrying in ~{Math.max(0, Math.ceil((nextRetryAt - Date.now())/1000))}s (attempt {retryCount + 1}/{RETRY_LIMIT})</div>
-                        )}
-                        {(resolverRunning || autoRetryActive) && (
-                          <div className="flex items-center justify-center gap-3 mt-2">
-                            {resolverRunId && (
-                              <>
-                                <a
-                                  href={`/api/agent/problem-resolver/${resolverRunId}/logs`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-blue-600 hover:text-blue-700"
-                                >
-                                  View resolver logs
-                                </a>
-                                <span className="text-gray-300">|</span>
-                                <a
-                                  href={`/api/agent/problem-resolver/${resolverRunId}/artifacts`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-blue-600 hover:text-blue-700"
-                                >
-                                  View resolver artifacts
-                                </a>
-                              </>
-                            )}
-                            <button onClick={cancelAutoRetry} className="px-3 py-1 rounded bg-gray-200 text-gray-700 text-xs hover:bg-gray-300">Cancel auto‑retry</button>
-                          </div>
-                        )}
-                        {!resolverRunning && (
-                          <button onClick={handleRun} disabled={autoRetryActive} className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm disabled:opacity-50"><i className="fas fa-play mr-1"></i>Run</button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {resolverRunning && (
-                    <div className="absolute inset-0 bg-white/60 backdrop-blur-sm pointer-events-none" />
-                  )}
+                <div className="flex items-end">
+                  <button
+                    onClick={handleDetect}
+                    className="glass-button bg-primary/20 hover:bg-primary/30 text-white px-8 py-2.5 rounded-xl font-medium flex items-center space-x-2"
+                  >
+                    <i className="fas fa-radar"></i>
+                    <span>Detect Config</span>
+                  </button>
                 </div>
               </div>
 
-              {instance.logsUrl && (
-                <LogsPanel
-                  instanceId={instance.instanceId}
-                  logsUrl={instance.logsUrl}
-                  tail={100}
-                />
-              )}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Left Sidebar */}
+                <div className="lg:col-span-4 space-y-6">
+                  <StatusIndicator
+                    status={instance.status}
+                    progress={instance.progress}
+                    currentStep={instance.currentStep}
+                    logsUrl={instance.logsUrl}
+                  />
+
+                  <PermissionsStatsPanel />
+
+                  {instance.sessionToken && (
+                    <SessionContextPanel
+                      sessionToken={instance.sessionToken}
+                    />
+                  )}
+                </div>
+
+                {/* Main Preview Area */}
+                <div className="lg:col-span-8 space-y-6">
+                  <div className="glass-panel rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/20">
+                    {/* Preview Header */}
+                    <div className="px-6 py-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-2.5 h-2.5 rounded-full ${previewActive ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-red-500 opacity-50'}`}></div>
+                        <span className="text-sm font-medium text-gray-200">Live Preview</span>
+                        {previewStatusLabel && (
+                          <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{previewStatusLabel}</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={handleRun}
+                          disabled={resolverRunning || autoRetryActive}
+                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20 disabled:hidden"
+                        >
+                          <i className="fas fa-play mr-1.5"></i>Run
+                        </button>
+                        <button
+                          onClick={startResolverAndRerun}
+                          disabled={resolverRunning}
+                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20 disabled:hidden"
+                        >
+                          <i className="fas fa-bug mr-1.5"></i>Diagnose
+                        </button>
+                        <button
+                          onClick={handleDeploy}
+                          disabled={!previewActive}
+                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 border-indigo-500/20 disabled:hidden"
+                        >
+                          <i className="fas fa-rocket mr-1.5"></i>Deploy
+                        </button>
+                        <button
+                          onClick={handleStop}
+                          disabled={!instance.instanceId}
+                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/20 disabled:hidden"
+                        >
+                          <i className="fas fa-square mr-1.5"></i>Stop
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Preview Body */}
+                    <div className="bg-[#0c0c0e] min-h-[500px] relative">
+                      {previewActive ? (
+                        <LivePreview
+                          previewUrl={instance.previewUrl as string}
+                          openUrl={(instance.rawPreviewUrl || instance.previewUrl) as string}
+                          sessionToken={instance.sessionToken}
+                          instanceId={instance.instanceId as string}
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center space-y-4 max-w-md px-6">
+                            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
+                              <i className="fas fa-cube text-3xl text-gray-600"></i>
+                            </div>
+
+                            {resolverRunning ? (
+                              <div className="space-y-2">
+                                <h3 className="text-lg font-medium text-white">Auto-fixing Issues</h3>
+                                <div className="flex items-center justify-center space-x-2 text-primary">
+                                  <i className="fas fa-circle-notch fa-spin"></i>
+                                  <span>{resolverStatus}...</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <h3 className="text-lg font-medium text-white">Ready to Launch</h3>
+                                <p className="text-gray-500 text-sm">
+                                  Start the sandbox to preview your application. Our agents will automatically detect and fix build errors if they occur.
+                                </p>
+                              </div>
+                            )}
+
+                            {lastRunError && (
+                              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-left">
+                                <div className="flex items-start space-x-3">
+                                  <i className="fas fa-exclamation-triangle text-red-500 mt-0.5"></i>
+                                  <p className="text-sm text-red-200">{lastRunError}</p>
+                                </div>
+                              </div>
+                            )}
+
+                            {!resolverRunning && (
+                              <button
+                                onClick={handleRun}
+                                className="mt-4 px-8 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/25 transition-all transform hover:scale-105"
+                              >
+                                <i className="fas fa-power-off mr-2"></i>Launch Sandbox
+                              </button>
+                            )}
+
+                            {autoRetryActive && nextRetryAt && (
+                              <div className="text-xs text-gray-500 pt-4">
+                                Auto-retrying in <span className="text-white font-mono">{Math.max(0, Math.ceil((nextRetryAt - Date.now()) / 1000))}s</span>
+                                <br />
+                                <button onClick={cancelAutoRetry} className="text-gray-400 hover:text-white underline mt-1">Cancel</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {instance.logsUrl && (
+                    <div className="glass-panel rounded-2xl p-1 overflow-hidden">
+                      <div className="bg-black/50 rounded-xl overflow-hidden">
+                        <LogsPanel
+                          instanceId={instance.instanceId}
+                          logsUrl={instance.logsUrl}
+                          tail={100}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-        </ErrorBoundary>
-      )}
+          </ErrorBoundary>
+        )}
+      </main>
     </div>
   );
 };
+
 
 export default App;

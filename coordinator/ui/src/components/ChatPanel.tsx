@@ -113,7 +113,7 @@ function renderMessageContent(
               if (typeof g.__sbAddChangeDirect === 'function') {
                 g.__sbAddChangeDirect(detail);
               }
-            } catch {}
+            } catch { }
           }}
         >
           Add to Changes
@@ -150,7 +150,7 @@ function renderMessageContent(
                   if (typeof g.__sbAddChangeDirect === 'function') {
                     g.__sbAddChangeDirect(detail);
                   }
-                } catch {}
+                } catch { }
               }}
             >
               Add to Changes
@@ -233,7 +233,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
       if (wsRef.current) {
         wsRef.current.close();
       }
-    } catch {}
+    } catch { }
     wsRef.current = null;
     setConnected(false);
   }, []);
@@ -337,7 +337,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
     if (contextRoot) payload.context_root = contextRoot;
     if (selectedPath) payload.active_file = joinPath(contextRoot, selectedPath);
     if (Object.keys(payload).length === 0) return;
-    apiClient.put(`/api/chat/${sessionId}/state`, payload, { suppressErrorNotification: true }).catch(()=>{});
+    apiClient.put(`/api/chat/${sessionId}/state`, payload, { suppressErrorNotification: true }).catch(() => { });
   }, [sessionId, selectedPath, contextRoot]);
 
   const onSelectSession = async (sid: string) => {
@@ -455,42 +455,43 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
   const hideList = hideSessionList ?? embedded;
 
   return (
-    <div className={embedded ? '' : 'container mx-auto px-4 py-8'}>
-      <div className={embedded ? (hideList ? '' : 'grid grid-cols-1 lg:grid-cols-4 gap-3') : 'grid grid-cols-1 lg:grid-cols-4 gap-6'}>
+    <div className={embedded ? 'h-full' : 'container mx-auto px-4 py-8'}>
+      <div className={embedded ? 'h-full flex flex-col' : 'grid grid-cols-1 lg:grid-cols-4 gap-6'}>
         {!hideList && (
-        <aside className={embedded ? 'bg-white rounded border p-3 lg:col-span-1' : 'bg-white rounded-lg shadow p-4 lg:col-span-1'}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-700">Sessions</h2>
-            <button
-              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-              onClick={async () => {
-                const created = await apiClient.post(`/api/chat/sessions`, {});
-                setSessions((prev) => [{ id: created.id, title: created.title }, ...prev]);
-                onSelectSession(created.id);
-              }}
-            >New</button>
-          </div>
-          <div className="space-y-2 max-h-80 overflow-auto">
-            {sessions.map((s) => (
+          <aside className={embedded ? 'glass-panel rounded-xl p-3 lg:col-span-1 mb-4' : 'glass-panel rounded-xl p-4 lg:col-span-1'}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Sessions</h2>
               <button
-                key={s.id}
-                onClick={() => onSelectSession(s.id)}
-                className={`w-full text-left px-3 py-2 rounded border ${sessionId === s.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
-              >
-                <div className="text-sm font-medium text-gray-800 truncate">{s.title || s.id.slice(0, 8)}</div>
-                <div className="text-[10px] text-gray-500">{s.message_count ?? 0} messages</div>
-              </button>
-            ))}
-          </div>
-        </aside>
+                className="text-[10px] px-2 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary hover:text-white transition-colors border border-primary/20 font-bold"
+                onClick={async () => {
+                  const created = await apiClient.post(`/api/chat/sessions`, {});
+                  setSessions((prev) => [{ id: created.id, title: created.title }, ...prev]);
+                  onSelectSession(created.id);
+                }}
+              >New</button>
+            </div>
+            <div className="space-y-2 max-h-80 overflow-auto custom-scrollbar pr-1">
+              {sessions.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => onSelectSession(s.id)}
+                  className={`w-full text-left px-3 py-2 rounded-lg border transition-all ${sessionId === s.id ? 'bg-primary/20 border-primary/30 text-white' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
+                >
+                  <div className="text-xs font-medium truncate">{s.title || s.id.slice(0, 8)}</div>
+                  <div className="text-[10px] opacity-60">{s.message_count ?? 0} messages</div>
+                </button>
+              ))}
+            </div>
+          </aside>
         )}
 
-        <section className={embedded ? (hideList ? 'bg-white rounded border p-3 flex flex-col h-[65vh]' : 'bg-white rounded border p-3 lg:col-span-3 flex flex-col h-[60vh]') : 'bg-white rounded-lg shadow p-4 lg:col-span-3 flex flex-col h-[70vh]'}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-sm text-gray-600 flex items-center gap-2">
-              <span>Agent Chat</span>
-              <span className="text-gray-400">•</span>
-              <span className="font-mono text-xs">{sessionId?.slice(0, 8) || '...'}</span>
+        <section className={embedded ? 'glass-panel rounded-xl flex flex-col flex-1 min-h-0 overflow-hidden border border-white/10' : 'glass-panel rounded-xl p-0 lg:col-span-3 flex flex-col h-[70vh] border border-white/10'}>
+          <div className="flex flex-shrink-0 items-center justify-between p-3 border-b border-white/10 bg-black/20">
+            <div className="text-xs text-gray-400 flex items-center gap-2">
+              <i className="fas fa-robot text-primary mb-0.5"></i>
+              <span className="font-bold text-gray-200">AI Assistant</span>
+              <span className="text-gray-600">•</span>
+              <span className="font-mono text-[10px] opacity-50">{sessionId?.slice(0, 8) || '...'}</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -499,59 +500,106 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
                   setSessions((prev) => [{ id: created.id, title: created.title }, ...prev]);
                   onSelectSession(created.id);
                 }}
-                className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                className="w-6 h-6 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white flex items-center justify-center transition-colors"
                 title="New chat"
               >
-                + New
+                <i className="fas fa-plus text-[10px]"></i>
               </button>
-              <button onClick={readCurrentFile} disabled={!selectedPath} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50" title="Read current file">Read file</button>
-              <div className="flex items-center gap-1">
-                <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search" className="text-xs px-2 py-1 border rounded w-28" />
-                <button onClick={doSearch} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">Go</button>
+              <button onClick={readCurrentFile} disabled={!selectedPath} className="w-6 h-6 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white flex items-center justify-center disabled:opacity-30 transition-colors" title="Read current file">
+                <i className="fas fa-file-code text-[10px]"></i>
+              </button>
+
+              <div className="hidden sm:flex items-center gap-1 bg-black/20 rounded-lg p-0.5 border border-white/5">
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." className="text-[10px] px-2 py-0.5 bg-transparent border-none text-gray-300 w-20 focus:ring-0 placeholder-gray-600" />
+                <button onClick={doSearch} className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-[10px] text-gray-400 hover:text-white flex items-center justify-center">
+                  <i className="fas fa-search"></i>
+                </button>
               </div>
-              <button onClick={grantWrite} className="text-xs px-2 py-1 rounded bg-amber-600 text-white hover:bg-amber-700" title="Grant allow_write">Grant write</button>
-              <span className="text-xs text-gray-500">{connecting ? 'Connecting…' : connected ? 'Connected' : 'Disconnected'}</span>
+
+              <button onClick={grantWrite} className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 hover:text-amber-400 border border-amber-500/20 text-[10px] font-bold transition-colors" title="Grant allow_write">
+                <i className="fas fa-lock-open mr-1"></i> Grant
+              </button>
+
+              <div className={`w-2 h-2 rounded-full ${connecting ? 'bg-yellow-500 animate-pulse' : connected ? 'bg-emerald-500' : 'bg-red-500'}`} title={connecting ? 'Connecting' : connected ? 'Connected' : 'Disconnected'}></div>
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto space-y-3 pr-1">
+          <div className="flex-1 overflow-auto space-y-4 p-4 custom-scrollbar bg-black/20">
             {messages.map((m, idx) => (
               <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-3 py-2 rounded ${m.role === 'user' ? 'bg-blue-600 text-white' : m.role === 'assistant' ? 'bg-gray-100 text-gray-800' : 'bg-amber-50 text-amber-900 border border-amber-200'}`}>
+                <div
+                  className={`max-w-[90%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${m.role === 'user'
+                    ? 'bg-primary/20 border border-primary/30 text-white rounded-tr-sm'
+                    : m.role === 'assistant'
+                      ? 'bg-white/5 border border-white/10 text-gray-200 rounded-tl-sm'
+                      : 'bg-amber-500/10 border border-amber-500/20 text-amber-200 font-mono text-xs rounded-tl-sm'
+                    }`}
+                >
+                  {m.role === 'assistant' && (
+                    <div className="mb-1 text-[10px] font-bold text-primary uppercase tracking-wider opacity-70 flex items-center gap-1">
+                      <i className="fas fa-robot"></i> Assistant
+                    </div>
+                  )}
+                  {m.role === 'tool' && (
+                    <div className="mb-1 text-[10px] font-bold text-amber-400 uppercase tracking-wider opacity-70 flex items-center gap-1">
+                      <i className="fas fa-tools"></i> Tool Output
+                    </div>
+                  )}
                   {renderMessageContent(m.content, activeDisplayPath, (label) => showToast(`Sent to Changes: ${label}`))}
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="mt-3 pt-3 border-t border-gray-200">
-            <div className="flex items-center justify-between mb-2 text-xs text-gray-600">
-              <div className="truncate pr-2">
-                <span className="text-gray-500">Active file: </span>
-                <span className="font-mono break-all">{activeDisplayPath || 'No file selected'}</span>
+          <div className="flex-shrink-0 p-3 border-t border-white/10 bg-black/40 backdrop-blur-md">
+            <div className="flex items-center justify-between mb-2 text-[10px] text-gray-500 font-medium px-1">
+              <div className="truncate pr-2 flex items-center">
+                <i className="far fa-file mr-1.5 opacity-70"></i>
+                <span className="text-gray-600 mr-1">Active file:</span>
+                <span className="text-gray-400 font-mono break-all">{activeDisplayPath ? activeDisplayPath.split('/').pop() : 'None'}</span>
               </div>
-              <button onClick={readCurrentFile} disabled={!selectedPath} className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">Read file</button>
+              <button onClick={readCurrentFile} disabled={!selectedPath} className="text-[10px] px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 hover:text-white disabled:opacity-30 transition-colors">Read Context</button>
             </div>
-            <div className="flex items-center gap-2" onDragOver={allowDrop} onDrop={handleDropOnComposer}>
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') onSend(); }}
-                ref={inputRef}
-                className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="Type a message. Try @this, @path/to/file, or /search query"
-              />
-              <button onClick={onSend} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Send</button>
-              <label className="px-3 py-2 bg-gray-100 rounded cursor-pointer text-sm hover:bg-gray-200">
-                <input type="file" className="hidden" onChange={onUpload} />
-                {uploading ? 'Uploading…' : 'Attach'}
-              </label>
+
+            <div className="relative group" onDragOver={allowDrop} onDrop={handleDropOnComposer}>
+              <div className="absolute inset-0 bg-primary/5 rounded-xl -z-10 group-hover:bg-primary/10 transition-colors"></div>
+              <div className="flex items-end gap-2 p-1.5">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      onSend();
+                    }
+                  }}
+                  ref={inputRef as any}
+                  className="flex-1 bg-transparent border-none text-white placeholder-gray-500 text-sm focus:ring-0 max-h-32 min-h-[40px] py-2 px-2 resize-none custom-scrollbar"
+                  placeholder="Ask AI assistant..."
+                  rows={1}
+                />
+                <div className="flex flex-col gap-1 pb-1">
+                  <label className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white cursor-pointer transition-colors" title="Attach file">
+                    <input type="file" className="hidden" onChange={onUpload} />
+                    {uploading ? <i className="fas fa-circle-notch fa-spin text-xs"></i> : <i className="fas fa-paperclip"></i>}
+                  </label>
+                  <button
+                    onClick={onSend}
+                    disabled={!input.trim()}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-primary hover:bg-primary-600 text-white shadow-lg shadow-primary/20 disabled:opacity-50 disabled:shadow-none transition-all transform active:scale-95"
+                  >
+                    <i className="fas fa-paper-plane text-xs"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           {toast && (
-            <div className="fixed bottom-4 right-6 z-50">
-              <div className="px-3 py-2 bg-gray-900 text-white text-xs rounded shadow">{toast}</div>
+            <div className="absolute bottom-20 right-6 z-50">
+              <div className="px-4 py-2 bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-emerald-500/20 animate-fade-in flex items-center">
+                <i className="fas fa-check-circle mr-2"></i>
+                {toast}
+              </div>
             </div>
           )}
         </section>

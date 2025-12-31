@@ -62,36 +62,36 @@ const NotificationCard: React.FC<{
     switch (notification.type) {
       case 'success':
         return {
-          bg: 'bg-green-50',
-          border: 'border-green-200',
-          icon: 'fa-check-circle text-green-600',
-          text: 'text-green-800',
-          title: 'text-green-900'
+          bg: 'bg-emerald-500/10',
+          border: 'border-emerald-500/20',
+          icon: 'fa-check-circle text-emerald-400',
+          text: 'text-emerald-100',
+          title: 'text-emerald-50'
         };
       case 'error':
         return {
-          bg: 'bg-red-50',
-          border: 'border-red-200',
-          icon: 'fa-exclamation-circle text-red-600',
-          text: 'text-red-800',
-          title: 'text-red-900'
+          bg: 'bg-red-500/10',
+          border: 'border-red-500/20',
+          icon: 'fa-exclamation-circle text-red-400',
+          text: 'text-red-100',
+          title: 'text-red-50'
         };
       case 'warning':
         return {
-          bg: 'bg-yellow-50',
-          border: 'border-yellow-200',
-          icon: 'fa-exclamation-triangle text-yellow-600',
-          text: 'text-yellow-800',
-          title: 'text-yellow-900'
+          bg: 'bg-amber-500/10',
+          border: 'border-amber-500/20',
+          icon: 'fa-exclamation-triangle text-amber-400',
+          text: 'text-amber-100',
+          title: 'text-amber-50'
         };
       case 'info':
       default:
         return {
-          bg: 'bg-blue-50',
-          border: 'border-blue-200',
-          icon: 'fa-info-circle text-blue-600',
-          text: 'text-blue-800',
-          title: 'text-blue-900'
+          bg: 'bg-blue-500/10',
+          border: 'border-blue-500/20',
+          icon: 'fa-info-circle text-blue-400',
+          text: 'text-blue-100',
+          title: 'text-blue-50'
         };
     }
   };
@@ -100,9 +100,8 @@ const NotificationCard: React.FC<{
 
   return (
     <div
-      className={`${styles.bg} border ${styles.border} rounded-lg shadow-lg p-4 transition-all duration-300 transform ${
-        isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
-      }`}
+      className={`${styles.bg} border ${styles.border} backdrop-blur-md rounded-xl shadow-lg p-4 transition-all duration-300 transform ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+        }`}
     >
       <div className="flex items-start">
         <i className={`fas ${styles.icon} mt-1 mr-3`}></i>
@@ -112,7 +111,7 @@ const NotificationCard: React.FC<{
           {notification.action && (
             <button
               onClick={notification.action.onClick}
-              className={`mt-2 text-sm font-semibold ${styles.text} hover:underline`}
+              className={`mt-2 text-sm font-semibold ${styles.text} hover:text-white hover:underline decoration-white/30`}
             >
               {notification.action.label} →
             </button>
