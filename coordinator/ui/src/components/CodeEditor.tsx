@@ -11,7 +11,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ language, value, onChang
   return (
     <div className="w-full h-full border rounded-lg overflow-hidden">
       <Editor
-        height="60vh"
+        height="100%"
         theme="vs-dark"
         defaultLanguage={language}
         value={value}
