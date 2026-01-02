@@ -9,7 +9,7 @@ interface CodeEditorProps {
 
 export const CodeEditor: React.FC<CodeEditorProps> = ({ language, value, onChange }) => {
   return (
-    <div className="w-full h-full border rounded-lg overflow-hidden">
+    <div className="w-full h-full overflow-hidden">
       <Editor
         height="100%"
         theme="vs-dark"
@@ -17,10 +17,19 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ language, value, onChang
         value={value}
         onChange={(val) => onChange(val ?? '')}
         options={{
-          minimap: { enabled: false },
-          fontSize: 14,
+          minimap: { enabled: true },
+          fontSize: 13,
+          lineHeight: 20,
           scrollBeyondLastLine: false,
           automaticLayout: true,
+          renderLineHighlight: 'line',
+          cursorBlinking: 'smooth',
+          smoothScrolling: true,
+          padding: { top: 8, bottom: 8 },
+          scrollbar: {
+            verticalScrollbarSize: 10,
+            horizontalScrollbarSize: 10,
+          },
         }}
       />
     </div>

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { apiClient } from '../utils/apiClient';
 
 interface ChatSessionMeta {
@@ -30,22 +31,224 @@ const wsUrlFor = (sessionId: string) => {
   return `${base}/api/chat/ws/${sessionId}`;
 };
 
-const DiffBlock: React.FC<{ text: string }> = ({ text }) => {
+// Slash command definitions
+const SLASH_COMMANDS = [
+  { cmd: '/fix', desc: 'Fix errors in current file', icon: 'fa-wrench', color: 'text-red-400' },
+  { cmd: '/test', desc: 'Generate tests for code', icon: 'fa-flask', color: 'text-green-400' },
+  { cmd: '/explain', desc: 'Explain selected code', icon: 'fa-lightbulb', color: 'text-yellow-400' },
+  { cmd: '/refactor', desc: 'Suggest refactoring', icon: 'fa-recycle', color: 'text-blue-400' },
+  { cmd: '/doc', desc: 'Generate documentation', icon: 'fa-file-alt', color: 'text-purple-400' },
+  { cmd: '/search', desc: 'Search codebase', icon: 'fa-search', color: 'text-cyan-400' },
+  { cmd: '/run', desc: 'Run a terminal command', icon: 'fa-terminal', color: 'text-orange-400' },
+];
+
+// Enhanced Diff Block with actions
+interface EnhancedDiffBlockProps {
+  text: string;
+  filePath?: string;
+  onApply?: (diffText: string, filePath: string) => Promise<void>;
+  onReject?: () => void;
+}
+
+const EnhancedDiffBlock: React.FC<EnhancedDiffBlockProps> = ({ text, filePath, onApply, onReject }) => {
+  const [applying, setApplying] = React.useState(false);
+  const [applied, setApplied] = React.useState(false);
+  const [rejected, setRejected] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
   const lines = text.replace(/\r\n/g, '\n').split('\n');
+
   const renderLine = (ln: string, i: number) => {
-    let cls = 'bg-white text-gray-800';
-    if (ln.startsWith('@@')) cls = 'bg-indigo-50 text-indigo-800';
-    else if (ln.startsWith('+++') || ln.startsWith('---')) cls = 'bg-gray-50 text-gray-600';
-    else if (ln.startsWith('+')) cls = 'bg-green-50 text-green-800';
-    else if (ln.startsWith('-')) cls = 'bg-red-50 text-red-800';
-    else cls = 'bg-white text-gray-800';
+    let cls = 'bg-[#1e1e1e] text-[#d4d4d4]';
+    let prefix = ' ';
+    if (ln.startsWith('@@')) {
+      cls = 'bg-[#264f78] text-[#569cd6]';
+      prefix = '';
+    } else if (ln.startsWith('+++') || ln.startsWith('---')) {
+      cls = 'bg-[#1e1e1e] text-[#808080]';
+      prefix = '';
+    } else if (ln.startsWith('+')) {
+      cls = 'bg-[#1d3d1d] text-[#4ec9b0]';
+      prefix = '+';
+    } else if (ln.startsWith('-')) {
+      cls = 'bg-[#3d1d1d] text-[#f14c4c]';
+      prefix = '-';
+    }
     return (
-      <div key={i} className={`text-xs font-mono px-2 py-0.5 ${cls}`}>{ln || '\u00A0'}</div>
+      <div key={i} className={`text-xs font-mono px-3 py-0.5 ${cls} flex`}>
+        <span className="w-4 text-[#606060] mr-2 select-none">{prefix}</span>
+        <span className="flex-1">{ln.slice(prefix === ' ' ? 0 : 1) || '\u00A0'}</span>
+      </div>
     );
   };
+
+  const handleApply = async () => {
+    if (!onApply || !filePath) return;
+    setApplying(true);
+    setError(null);
+    try {
+      await onApply(text, filePath);
+      setApplied(true);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to apply');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const handleReject = () => {
+    setRejected(true);
+    onReject?.();
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+  };
+
+  if (rejected) {
+    return (
+      <div className="text-xs text-gray-500 italic py-2">
+        <i className="fas fa-times-circle mr-1"></i> Change rejected
+      </div>
+    );
+  }
+
   return (
-    <div className="border rounded overflow-auto max-h-96">
-      {lines.map(renderLine)}
+    <div className={`border rounded-lg overflow-hidden ${applied ? 'border-green-500/50' : 'border-[#3c3c3c]'}`}>
+      {/* Header with file path */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-[#3c3c3c]">
+        <div className="flex items-center gap-2 text-xs">
+          <i className="fas fa-file-code text-[#007acc]"></i>
+          <span className="text-[#cccccc] font-mono truncate max-w-[200px]">{filePath || 'unknown'}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {applied ? (
+            <span className="text-green-400 text-xs flex items-center gap-1">
+              <i className="fas fa-check-circle"></i> Applied
+            </span>
+          ) : (
+            <>
+              <button
+                onClick={handleCopy}
+                className="px-2 py-0.5 text-[10px] rounded bg-[#3c3c3c] hover:bg-[#4c4c4c] text-gray-300 transition-colors"
+                title="Copy diff"
+              >
+                <i className="fas fa-copy"></i>
+              </button>
+              <button
+                onClick={handleReject}
+                className="px-2 py-0.5 text-[10px] rounded bg-[#f14c4c]/20 hover:bg-[#f14c4c]/40 text-[#f14c4c] transition-colors"
+                title="Reject"
+              >
+                <i className="fas fa-times mr-1"></i>Reject
+              </button>
+              <button
+                onClick={handleApply}
+                disabled={applying || !onApply}
+                className="px-2 py-0.5 text-[10px] rounded bg-[#4ec9b0]/20 hover:bg-[#4ec9b0]/40 text-[#4ec9b0] transition-colors disabled:opacity-50"
+                title="Apply changes"
+              >
+                {applying ? (
+                  <i className="fas fa-circle-notch fa-spin mr-1"></i>
+                ) : (
+                  <i className="fas fa-check mr-1"></i>
+                )}
+                Apply
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Diff content */}
+      <div className="overflow-auto max-h-80 bg-[#1e1e1e]">
+        {lines.map(renderLine)}
+      </div>
+
+      {/* Error message */}
+      {error && (
+        <div className="px-3 py-1.5 bg-[#3d1d1d] text-[#f14c4c] text-xs">
+          <i className="fas fa-exclamation-triangle mr-1"></i> {error}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Keep old DiffBlock for backwards compatibility 
+const DiffBlock: React.FC<{ text: string }> = ({ text }) => {
+  return <EnhancedDiffBlock text={text} />;
+};
+
+// Command Block for terminal/bash code with Run button
+interface CommandBlockProps {
+  code: string;
+  language: string;
+  onRun?: (command: string) => void;
+}
+
+const CommandBlock: React.FC<CommandBlockProps> = ({ code, language, onRun }) => {
+  const [copied, setCopied] = React.useState(false);
+  const [running, setRunning] = React.useState(false);
+
+  const isRunnable = ['bash', 'sh', 'shell', 'zsh', 'powershell', 'cmd', 'terminal'].includes(language.toLowerCase());
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRun = async () => {
+    if (!onRun) return;
+    setRunning(true);
+    try {
+      onRun(code.trim());
+    } finally {
+      setTimeout(() => setRunning(false), 1000);
+    }
+  };
+
+  return (
+    <div className="border border-[#3c3c3c] rounded-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-[#3c3c3c]">
+        <div className="flex items-center gap-2 text-xs">
+          <i className={`fas ${isRunnable ? 'fa-terminal' : 'fa-code'} text-[#569cd6]`}></i>
+          <span className="text-[#808080] font-mono">{language || 'code'}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCopy}
+            className="px-2 py-0.5 text-[10px] rounded bg-[#3c3c3c] hover:bg-[#4c4c4c] text-gray-300 transition-colors"
+            title="Copy code"
+          >
+            {copied ? <i className="fas fa-check text-green-400"></i> : <i className="fas fa-copy"></i>}
+          </button>
+          {isRunnable && onRun && (
+            <button
+              onClick={handleRun}
+              disabled={running}
+              className="px-2 py-0.5 text-[10px] rounded bg-[#4ec9b0]/20 hover:bg-[#4ec9b0]/40 text-[#4ec9b0] transition-colors disabled:opacity-50 flex items-center gap-1"
+              title="Run in terminal"
+            >
+              {running ? (
+                <i className="fas fa-circle-notch fa-spin"></i>
+              ) : (
+                <i className="fas fa-play"></i>
+              )}
+              Run
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Code content */}
+      <div className="overflow-auto max-h-80 bg-[#1e1e1e] p-3">
+        <pre className="text-xs font-mono text-[#d4d4d4] whitespace-pre-wrap break-words">
+          {code}
+        </pre>
+      </div>
     </div>
   );
 };
@@ -53,9 +256,11 @@ const DiffBlock: React.FC<{ text: string }> = ({ text }) => {
 function renderMessageContent(
   content: string,
   fallbackPath?: string,
-  onAdded?: (label: string) => void,
+  onApply?: (diffText: string, filePath: string) => Promise<void>,
+  onRunCommand?: (command: string) => void,
 ): JSX.Element {
-  const re = /```diff\s*([\s\S]*?)```/g;
+  // Handle all code blocks - diffs get special treatment
+  const codeBlockRe = /```(\w+)?\s*([\s\S]*?)```/g;
   const parts: React.ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -76,51 +281,56 @@ function renderMessageContent(
       }
     }
     // Find representative removed/added lines
-    const oldMatch = norm.match(/^(?:-|\-)(?!-)(.*)$/m);
-    const newMatch = norm.match(/^(?:\+|\+)(?!\+)(.*)$/m);
+    const oldMatch = norm.match(/^(?:-|\-)(.*)$/m);
+    const newMatch = norm.match(/^(?:\+|\+)(.*)$/m);
     let oldLine = oldMatch ? (oldMatch[1] || '').trim() : '';
     let newLine = newMatch ? (newMatch[1] || '').trim() : '';
     if (!path && fallbackPath) path = sanitizePath(fallbackPath);
     return { path: sanitizePath(path), oldLine, newLine };
   };
-  while ((m = re.exec(content)) !== null) {
+  while ((m = codeBlockRe.exec(content)) !== null) {
     const pre = content.slice(last, m.index);
     if (pre.trim()) {
-      parts.push(<div key={`t-${last}`} className="whitespace-pre-wrap break-words text-sm">{pre}</div>);
+      // Use ReactMarkdown for text content to render markdown properly
+      parts.push(
+        <div key={`t-${last}`} className="prose prose-invert prose-sm max-w-none">
+          <ReactMarkdown>{pre}</ReactMarkdown>
+        </div>
+      );
     }
-    const blockKey = `d-${m.index}`;
-    parts.push(<DiffBlock key={blockKey} text={m[1]} />);
-    const info = extractDiffInfo(m[1]);
-    parts.push(
-      <div key={`toolbar-${blockKey}`} className="flex items-center gap-2 mt-1">
-        <button
-          className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
-          onClick={() => {
-            const detail = { path: info.path, old: info.oldLine, new: info.newLine };
-            const ev1 = new CustomEvent('sb:add-change' as any, { detail, bubbles: true, composed: true } as any);
-            const ev2 = new CustomEvent('sb:add-change' as any, { detail, bubbles: true, composed: true } as any);
-            window.dispatchEvent(ev1);
-            document.dispatchEvent(ev2);
-            console.debug('[Chat] Add to Changes dispatched', detail);
-            (window as any).__lastAddChange = detail;
-            const label = (detail.path || '').split(/\s+/)[0] || 'change';
-            onAdded && onAdded(label);
-            // global queue fallback
-            try {
-              const g: any = window as any;
-              g.__sbAddChangeQueue = g.__sbAddChangeQueue || [];
-              g.__sbAddChangeQueue.push(detail);
-              if (typeof g.__sbAddChangeDirect === 'function') {
-                g.__sbAddChangeDirect(detail);
-              }
-            } catch { }
-          }}
-        >
-          Add to Changes
-        </button>
-      </div>
-    );
-    last = re.lastIndex;
+
+    const language = (m[1] || '').toLowerCase();
+    const code = m[2];
+    const blockKey = `c-${m.index}`;
+
+    // Check if content looks like a diff (regardless of language tag)
+    const looksLikeDiff = language === 'diff' ||
+      /(^---\s|^\+\+\+\s|^@@\s)/m.test(code) &&
+      (/^\+[^+]/m.test(code) || /^-[^-]/m.test(code));
+
+    if (looksLikeDiff) {
+      // Diff blocks use EnhancedDiffBlock
+      const info = extractDiffInfo(code);
+      parts.push(
+        <EnhancedDiffBlock
+          key={blockKey}
+          text={code}
+          filePath={info.path || fallbackPath}
+          onApply={onApply}
+        />
+      );
+    } else {
+      // Other code blocks use CommandBlock (with Run button for shell commands)
+      parts.push(
+        <CommandBlock
+          key={blockKey}
+          language={language || 'code'}
+          code={code}
+          onRun={onRunCommand}
+        />
+      );
+    }
+    last = codeBlockRe.lastIndex;
   }
   const tail = content.slice(last);
   if (parts.length === 0) {
@@ -128,43 +338,29 @@ function renderMessageContent(
     if (looksLikeUnified) {
       const info = extractDiffInfo(content);
       return (
-        <div className="space-y-2">
-          <DiffBlock text={content} />
-          <div className="flex items-center gap-2">
-            <button
-              className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
-              onClick={() => {
-                const detail = { path: info.path, old: info.oldLine, new: info.newLine };
-                const ev1 = new CustomEvent('sb:add-change' as any, { detail, bubbles: true, composed: true } as any);
-                const ev2 = new CustomEvent('sb:add-change' as any, { detail, bubbles: true, composed: true } as any);
-                window.dispatchEvent(ev1);
-                document.dispatchEvent(ev2);
-                console.debug('[Chat] Add to Changes dispatched', detail);
-                (window as any).__lastAddChange = detail;
-                const label = (detail.path || '').split(/\s+/)[0] || 'change';
-                onAdded && onAdded(label);
-                try {
-                  const g: any = window as any;
-                  g.__sbAddChangeQueue = g.__sbAddChangeQueue || [];
-                  g.__sbAddChangeQueue.push(detail);
-                  if (typeof g.__sbAddChangeDirect === 'function') {
-                    g.__sbAddChangeDirect(detail);
-                  }
-                } catch { }
-              }}
-            >
-              Add to Changes
-            </button>
-          </div>
-        </div>
+        <EnhancedDiffBlock
+          text={content}
+          filePath={info.path || fallbackPath}
+          onApply={onApply}
+        />
       );
     }
   }
   if (tail.trim()) {
-    parts.push(<div key={`t-end`} className="whitespace-pre-wrap break-words text-sm">{tail}</div>);
+    // Use ReactMarkdown for trailing text too
+    parts.push(
+      <div key={`t-end`} className="prose prose-invert prose-sm max-w-none">
+        <ReactMarkdown>{tail}</ReactMarkdown>
+      </div>
+    );
   }
   if (parts.length === 0) {
-    return <div className="whitespace-pre-wrap break-words text-sm">{content}</div>;
+    // Plain text without code blocks - render with markdown
+    return (
+      <div className="prose prose-invert prose-sm max-w-none">
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </div>
+    );
   }
   return <div className="space-y-2">{parts}</div>;
 }
@@ -190,6 +386,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
   const [search, setSearch] = useState<string>('');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [toast, setToast] = useState<string>('');
+
+  // Slash command autocomplete state
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const filteredCommands = input.startsWith('/')
+    ? SLASH_COMMANDS.filter(c => c.cmd.toLowerCase().startsWith(input.toLowerCase().split(' ')[0]))
+    : [];
 
   const joinPath = (base?: string, rel?: string) => {
     const b = (base || '').replace(/\\/g, '/').replace(/^\.+\//, '');
@@ -330,6 +533,52 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
     return () => closeWs();
   }, [ensureSession, loadHistory, openWs, closeWs, contextRoot]);
 
+  // Self-correction loop: listen for terminal errors and auto-request fix
+  const retryCountRef = useRef<number>(0);
+  const MAX_RETRIES = 3;
+
+  useEffect(() => {
+    const handleTerminalError = (e: CustomEvent<{ error: string; command: string }>) => {
+      const { error, command } = e.detail;
+
+      // Prevent infinite loops
+      if (retryCountRef.current >= MAX_RETRIES) {
+        setMessages((prev) => [...prev, {
+          role: 'system',
+          content: `⚠️ Auto-fix limit reached (${MAX_RETRIES} attempts). Please review the error manually.`
+        }]);
+        retryCountRef.current = 0;
+        return;
+      }
+
+      retryCountRef.current++;
+
+      // Send error to AI for fix suggestion
+      const fixRequest = `/fix The following command failed:\n\`${command}\`\n\nError output:\n\`\`\`\n${error}\n\`\`\`\n\nPlease analyze the error and suggest a fix.`;
+
+      setMessages((prev) => [...prev, {
+        role: 'system',
+        content: `🔄 Auto-fix attempt ${retryCountRef.current}/${MAX_RETRIES}: Detected error in terminal output`
+      }]);
+
+      // Send the fix request via WebSocket
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'user_message', text: fixRequest }));
+        setMessages((prev) => [...prev, { role: 'user', content: fixRequest }]);
+      }
+    };
+
+    window.addEventListener('sb:terminal-error', handleTerminalError as unknown as EventListener);
+    return () => window.removeEventListener('sb:terminal-error', handleTerminalError as unknown as EventListener);
+  }, []);
+
+  // Reset retry count when user sends a message manually
+  useEffect(() => {
+    if (input === '') {
+      // Don't reset on empty - this fires after each send
+    }
+  }, [input]);
+
   // Push active file + context root to backend session state when they change
   useEffect(() => {
     if (!sessionId) return;
@@ -406,6 +655,185 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
       e.target.value = '';
     }
   };
+
+  // Apply diff to a file - reads current content, applies changes, writes back
+  const applyDiff = useCallback(async (diffText: string, filePath: string): Promise<void> => {
+    if (!contextRoot) {
+      throw new Error('No context root specified');
+    }
+
+    // Prefer the currently selected file path if available
+    // The diff might have a generic or incorrect path, but we know which file user asked about
+    const actualPath = selectedPath || filePath;
+
+    if (!actualPath) {
+      throw new Error('No file path specified');
+    }
+
+    console.log('[ApplyDiff] Applying to:', actualPath, 'in', contextRoot);
+    console.log('[ApplyDiff] Diff path was:', filePath, 'Selected path:', selectedPath);
+    console.log('[ApplyDiff] Diff text preview:', diffText.slice(0, 200));
+
+    // First, read the original file
+    let originalContent = '';
+    try {
+      const readRes = await fetch(`/api/fs/read?root=${encodeURIComponent(contextRoot)}&path=${encodeURIComponent(actualPath)}`);
+      const readData = await readRes.json();
+      console.log('[ApplyDiff] Read response:', readData);
+      if (readData.error === 'file_not_found') {
+        // New file - no original content
+        originalContent = '';
+        console.log('[ApplyDiff] File not found, treating as new file');
+      } else if (readData.content !== undefined) {
+        originalContent = readData.content;
+        console.log('[ApplyDiff] Read', originalContent.length, 'chars from original file');
+      }
+    } catch (e) {
+      console.warn('[ApplyDiff] Could not read original file, treating as new:', e);
+      originalContent = '';
+    }
+
+    // Parse the diff and apply changes
+    const diffLines = diffText.replace(/\r\n/g, '\n').split('\n');
+    let newContent: string;
+
+    // Check if this looks like a unified diff with hunk headers
+    const hasHunkHeaders = diffLines.some(l => l.startsWith('@@'));
+
+    if (hasHunkHeaders && originalContent) {
+      // Apply as a proper patch
+      const originalLines = originalContent.split('\n');
+      const resultLines = [...originalLines];
+      let offset = 0; // Track line number shift due to insertions/deletions
+
+      for (let i = 0; i < diffLines.length; i++) {
+        const line = diffLines[i];
+
+        // Parse hunk header: @@ -start,count +start,count @@
+        const hunkMatch = line.match(/^@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@/);
+        if (hunkMatch) {
+          const oldStart = parseInt(hunkMatch[1], 10) - 1; // 0-indexed
+          let currentLine = oldStart + offset;
+
+          // Process lines in this hunk
+          for (let j = i + 1; j < diffLines.length; j++) {
+            const hunkLine = diffLines[j];
+
+            // Stop at next hunk or end of diff
+            if (hunkLine.startsWith('@@') || hunkLine.startsWith('diff ') ||
+              hunkLine.startsWith('---') || hunkLine.startsWith('+++')) {
+              i = j - 1;
+              break;
+            }
+
+            if (hunkLine.startsWith('-')) {
+              // Delete line
+              if (currentLine < resultLines.length) {
+                resultLines.splice(currentLine, 1);
+                offset--;
+              }
+            } else if (hunkLine.startsWith('+')) {
+              // Insert line
+              const content = hunkLine.slice(1);
+              resultLines.splice(currentLine, 0, content);
+              currentLine++;
+              offset++;
+            } else if (hunkLine.startsWith(' ') || hunkLine === '') {
+              // Context line - just move forward
+              currentLine++;
+            }
+
+            if (j === diffLines.length - 1) {
+              i = j;
+              break;
+            }
+          }
+        }
+      }
+
+      newContent = resultLines.join('\n');
+    } else {
+      // Simple diff or plain new content
+      // Check if there are any diff markers at all
+      const hasDiffMarkers = diffLines.some(l =>
+        l.startsWith('+') || l.startsWith('-') || l.startsWith(' ')
+      );
+
+      if (hasDiffMarkers) {
+        // Extract lines from diff format
+        const addedLines: string[] = [];
+        for (const line of diffLines) {
+          // Skip diff headers
+          if (line.startsWith('---') || line.startsWith('+++') ||
+            line.startsWith('@@') || line.startsWith('diff ')) {
+            continue;
+          }
+          // Collect added lines
+          if (line.startsWith('+')) {
+            addedLines.push(line.slice(1));
+          } else if (!line.startsWith('-')) {
+            // Context line (starts with space) or unchanged line
+            addedLines.push(line.startsWith(' ') ? line.slice(1) : line);
+          }
+        }
+        newContent = addedLines.join('\n');
+      } else {
+        // No diff markers - treat entire content as new file content
+        console.log('[ApplyDiff] No diff markers found, using entire content as new file');
+        newContent = diffText;
+      }
+    }
+
+    // Safety check: don't write empty content unless original was also empty
+    if (!newContent.trim() && originalContent.trim()) {
+      console.error('[ApplyDiff] Would create empty file from non-empty original - aborting');
+      throw new Error('Diff parsing resulted in empty content. This would delete your file. Please review the diff manually.');
+    }
+
+    console.log('[ApplyDiff] New content length:', newContent.length);
+
+    // Write the new content to the file
+    const res = await fetch('/api/fs/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        root: contextRoot,
+        path: actualPath,
+        content: newContent
+      })
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error?.detail || error?.message || `Write failed: ${res.status}`);
+    }
+
+    console.log('[ApplyDiff] Write successful to:', actualPath);
+
+    // Success feedback
+    showToast(`Applied changes to ${actualPath.split('/').pop()}`);
+
+    // Dispatch event to refresh editor if it has the file open
+    window.dispatchEvent(new CustomEvent('sb:file-updated', {
+      detail: { path: actualPath, root: contextRoot }
+    }));
+  }, [contextRoot, selectedPath]);
+
+  // Run a command in the terminal
+  const runCommand = useCallback((command: string) => {
+    // Dispatch event for terminal to pick up
+    window.dispatchEvent(new CustomEvent('sb:run-command', {
+      detail: { command, cwd: contextRoot }
+    }));
+    showToast(`Running: ${command.slice(0, 30)}${command.length > 30 ? '...' : ''}`);
+
+    // Also send as a system message to the chat for context
+    setMessages((prev) => [...prev, {
+      role: 'system',
+      content: `🖥️ Running command: \`${command}\``
+    }]);
+  }, [contextRoot]);
+
   const activeDisplayPath = selectedPath ? joinPath(contextRoot, selectedPath) : '';
 
   const insertAtCaret = (text: string) => {
@@ -545,7 +973,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
                       <i className="fas fa-tools"></i> Tool Output
                     </div>
                   )}
-                  {renderMessageContent(m.content, activeDisplayPath, (label) => showToast(`Sent to Changes: ${label}`))}
+                  {renderMessageContent(m.content, activeDisplayPath, applyDiff, runCommand)}
                 </div>
               </div>
             ))}
@@ -563,11 +991,73 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
 
             <div className="relative group" onDragOver={allowDrop} onDrop={handleDropOnComposer}>
               <div className="absolute inset-0 bg-primary/5 rounded-xl -z-10 group-hover:bg-primary/10 transition-colors"></div>
+
+              {/* Command Palette Dropdown */}
+              {input.startsWith('/') && filteredCommands.length > 0 && (
+                <div className="absolute bottom-full left-0 right-0 mb-2 bg-[#252526] border border-[#3c3c3c] rounded-lg shadow-xl overflow-hidden z-50">
+                  <div className="text-[10px] text-gray-500 px-3 py-1.5 border-b border-[#3c3c3c] uppercase tracking-wider">Commands</div>
+                  {filteredCommands.map((cmd, idx) => (
+                    <button
+                      key={cmd.cmd}
+                      onClick={() => {
+                        setInput(cmd.cmd + ' ');
+                        setSelectedCommandIndex(0);
+                        inputRef.current?.focus();
+                      }}
+                      className={`w-full text-left px-3 py-2 flex items-center gap-3 transition-colors ${idx === selectedCommandIndex
+                        ? 'bg-[#37373d] text-white'
+                        : 'text-gray-300 hover:bg-[#2a2d2e]'
+                        }`}
+                    >
+                      <i className={`fas ${cmd.icon} ${cmd.color} text-sm w-4`}></i>
+                      <div className="flex-1">
+                        <span className="font-medium text-sm">{cmd.cmd}</span>
+                        <span className="text-gray-500 text-xs ml-2">{cmd.desc}</span>
+                      </div>
+                      {idx === selectedCommandIndex && (
+                        <span className="text-[10px] text-gray-500 bg-[#3c3c3c] px-1.5 py-0.5 rounded">Tab</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="flex items-end gap-2 p-1.5">
                 <textarea
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    // Reset command selection when input changes
+                    if (e.target.value.startsWith('/')) {
+                      setSelectedCommandIndex(0);
+                      setShowCommandPalette(true);
+                    } else {
+                      setShowCommandPalette(false);
+                    }
+                  }}
                   onKeyDown={(e) => {
+                    // Handle command palette navigation
+                    if (input.startsWith('/') && filteredCommands.length > 0) {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setSelectedCommandIndex(prev => Math.min(prev + 1, filteredCommands.length - 1));
+                        return;
+                      }
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setSelectedCommandIndex(prev => Math.max(prev - 1, 0));
+                        return;
+                      }
+                      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !input.includes(' '))) {
+                        e.preventDefault();
+                        const selected = filteredCommands[selectedCommandIndex];
+                        if (selected) {
+                          setInput(selected.cmd + ' ');
+                          setSelectedCommandIndex(0);
+                        }
+                        return;
+                      }
+                    }
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
                       onSend();
@@ -575,7 +1065,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
                   }}
                   ref={inputRef as any}
                   className="flex-1 bg-transparent border-none text-white placeholder-gray-500 text-sm focus:ring-0 max-h-32 min-h-[40px] py-2 px-2 resize-none custom-scrollbar"
-                  placeholder="Ask AI assistant..."
+                  placeholder="Ask AI or type / for commands..."
                   rows={1}
                 />
                 <div className="flex flex-col gap-1 pb-1">

@@ -7,10 +7,10 @@
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
   }
-  
+
   body {
     @apply bg-background text-foreground antialiased font-sans selection:bg-primary/30 selection:text-primary-foreground;
-    background-image: 
+    background-image:
       radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
       radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
       radial-gradient(at 100% 100%, rgba(5, 150, 105, 0.1) 0px, transparent 50%);
@@ -22,7 +22,7 @@
   .glass-panel {
     @apply bg-card backdrop-blur-md border border-white/10 shadow-xl;
   }
-  
+
   .glass-button {
     @apply bg-white/10 hover:bg-white/20 active:bg-white/5 disabled:opacity-50 disabled:pointer-events-none transition-all duration-200 backdrop-blur-sm border border-white/5;
   }
@@ -44,4 +44,24 @@
 
 ::-webkit-scrollbar-thumb {
   @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+}
+
+/* IDE-specific scrollbar (darker) */
+.ide-scrollbar::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+}
+
+.ide-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+/* Hide scrollbar for tab bar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

@@ -6,7 +6,7 @@ import { EnhancedProblemResolverPanel } from './components/EnhancedProblemResolv
 import { ProjectExplorer } from './components/ProjectExplorer';
 import { NotificationSystem, useNotifications } from './components/NotificationSystem';
 import { SessionContextPanel } from './components/SessionContextPanel';
-import { EditorPanel } from './components/EditorPanel';
+import { IDEShell } from './components/IDEShell';
 import { PermissionsStatsPanel } from './components/PermissionsStatsPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { apiClient } from './utils/apiClient';
@@ -318,63 +318,62 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen text-foreground font-sans selection:bg-primary/30">
-      {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-white/5 mx-4 mt-4 rounded-2xl">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-            <div className="flex items-center space-x-4">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                <i className="fas fa-robot text-white text-xl"></i>
+      {/* Navbar - Hidden in Editor mode */}
+      {activePage !== 'editor' && (
+        <nav className="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-white/5 mx-4 mt-4 rounded-2xl">
+          <div className="container mx-auto px-6 py-4">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+              <div className="flex items-center space-x-4">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                  <i className="fas fa-robot text-white text-xl"></i>
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+                    Autonomous Builder
+                  </h1>
+                  <p className="text-xs text-gray-400 font-medium tracking-wide">COORDINATOR DASHBOARD</p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-                  Autonomous Builder
-                </h1>
-                <p className="text-xs text-gray-400 font-medium tracking-wide">COORDINATOR DASHBOARD</p>
-              </div>
-            </div>
 
-            <div className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5 backdrop-blur-sm">
-              <button
-                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'live-preview'
-                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
-                onClick={() => setActivePage('live-preview')}
-              >
-                <i className="fas fa-play-circle mr-2"></i>Live Preview
-              </button>
-              <button
-                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'problem-resolver'
-                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
-                onClick={() => setActivePage('problem-resolver')}
-              >
-                <i className="fas fa-wrench mr-2"></i>Resolver
-              </button>
-              <button
-                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'project-explorer'
-                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
-                onClick={() => setActivePage('project-explorer')}
-              >
-                <i className="fas fa-folder-open mr-2"></i>Explorer
-              </button>
-              <button
-                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'editor'
-                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
-                onClick={() => setActivePage('editor')}
-              >
-                <i className="fas fa-code mr-2"></i>Editor
-              </button>
+              <div className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5 backdrop-blur-sm">
+                <button
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'live-preview'
+                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  onClick={() => setActivePage('live-preview')}
+                >
+                  <i className="fas fa-play-circle mr-2"></i>Live Preview
+                </button>
+                <button
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'problem-resolver'
+                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  onClick={() => setActivePage('problem-resolver')}
+                >
+                  <i className="fas fa-wrench mr-2"></i>Resolver
+                </button>
+                <button
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'project-explorer'
+                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  onClick={() => setActivePage('project-explorer')}
+                >
+                  <i className="fas fa-folder-open mr-2"></i>Explorer
+                </button>
+                <button
+                  className="px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 text-gray-400 hover:text-white hover:bg-white/5"
+                  onClick={() => setActivePage('editor')}
+                >
+                  <i className="fas fa-code mr-2"></i>Editor
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </nav>
+        </nav>
+      )}
 
       {/* Main Content */}
       <main className="container mx-auto px-4 pt-32 pb-12">
@@ -429,17 +428,13 @@ const App: React.FC = () => {
           </ErrorBoundary>
         ) : activePage === 'editor' ? (
           <ErrorBoundary>
-            <div className="animate-fade-in h-[calc(100vh-160px)] flex flex-col">
-              <div className="glass-panel rounded-xl p-4 mb-4 flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-gray-300">
-                  <i className="fas fa-code-branch text-primary"></i>
-                  <span className="text-sm font-mono">{appPath}</span>
-                </div>
-              </div>
-              <div className="flex-1 rounded-2xl overflow-hidden glass-panel border-0 shadow-2xl">
-                <EditorPanel root={appPath} />
-              </div>
-            </div>
+            <IDEShell
+              root={appPath}
+              onRun={handleRun}
+              onStop={handleStop}
+              onBack={() => setActivePage('live-preview')}
+              isRunning={instance.status === 'running'}
+            />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary>
