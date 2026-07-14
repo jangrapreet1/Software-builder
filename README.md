@@ -1,135 +1,155 @@
 # Autonomous App-Building Platform
 
-An AI-driven development system that transforms short project briefs into working web applications using coordinated AI agents.
+An AI-driven development system that transforms natural-language project briefs into fully functional web applications. The system coordinates 23+ specialized AI agents to generate React frontends, FastAPI backends, PostgreSQL schemas, and Docker configurations, complete with live preview sandboxing, automated testing, and self-correcting error resolution.
 
 > [!CAUTION]
 > **RESTRICTED USE**: This repository is submitted for **interview evaluation purposes only**. Unauthorized copying, commercial use, or deployment of this code without the author's explicit written permission is strictly prohibited.
 
+---
 
-## Overview
+## 🏗️ System Architecture
 
-This platform uses:
-- **LangGraph**: Workflow orchestration and state management
-- **AutoGen**: Agent collaboration and dialogue
-- **Semantic Kernel**: Tool invocation and skill integration
-- **FastAPI**: Backend API generation
-- **React + Vite**: Frontend UI generation
-- **PostgreSQL**: Data persistence
-- **Docker Compose**: Integration and deployment
+The platform uses a modular, multi-agent architecture orchestrated by LangGraph, incorporating AutoGen dialogues for agent collaboration and Semantic Kernel for dynamic tool invocation:
 
-## System Architecture
-
-### 1. Coordinator Agent
-- Accepts project briefs
-- Extracts features, entities, and user flows
-- Breaks down into technical tasks
-- Orchestrates specialized agents
-- Validates and integrates outputs
-
-### 2. Frontend Agent
-- Generates React components with TailwindCSS
-- Creates views, navigation, forms
-- Implements API integration
-
-### 3. Backend Agent
-- Builds FastAPI REST endpoints
-- Implements SQLAlchemy models
-- Creates authentication and CRUD logic
-- Generates database migrations
-
-### 4. Integration Environment
-- Combines frontend and backend
-- Sets up Docker Compose
-- Provides local web UI for testing
-
-## Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Set up environment
-cp .env.example .env
-# Add your Google Gemini API key to .env (set GOOGLE_API_KEY)
-
-# Run the platform
-docker-compose up
-
-# Access the platform
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000
-# Coordinator UI: http://localhost:5000
+```mermaid
+graph TB
+    A[👤 User] -->|"Build brief: 'Task Manager'"| B[📊 Dashboard UI]
+    B -->|HTTP POST| C[⚡ FastAPI Coordinator Server]
+    C -->|Start Workflow| D[⚙️ LangGraph Workflow Engine]
+    
+    D -->|Step 1: Analyze| E[🧠 Coordinator Agent]
+    E -->|Specs & Tasks| F[Plan Specifications]
+    
+    F -->|Step 2: Develop| G[🐍 Backend Agent]
+    F -->|Step 2: Develop| H[⚛️ Frontend Agent]
+    
+    G -->|FastAPI Code| I[📦 Integration Agent]
+    H -->|React Code| I
+    
+    I -->|Step 3: Package| J[🐳 Docker Compose & Env]
+    J -->|Step 4: Verify| K[🧪 Tester Agent]
+    
+    K -->|Tests Pass| L[✅ Live Preview Sandbox]
+    K -->|Tests Fail| M[🔧 Enhanced Problem Resolver]
+    M -->|Self-Correction / Patch| K
 ```
 
-## Testing
+### Flow of Execution:
+1.  **Analyze Brief**: The [Coordinator Agent](file:///c:/Users/Lenovo/Code/Software%20builder/agents/coordinator_agent.py) parses the user prompt, extracting key features, data models (entities), and user journeys.
+2.  **Parallel Code Generation**: The [Backend Agent](file:///c:/Users/Lenovo/Code/Software%20builder/agents/backend_agent.py) and [Frontend Agent](file:///c:/Users/Lenovo/Code/Software%20builder/agents/frontend_agent.py) generate their respective application modules in parallel.
+3.  **App Packaging & Integration**: The [Integration Agent](file:///c:/Users/Lenovo/Code/Software%20builder/agents/integration_agent.py) builds the unified directory structure, configures the environment file (`.env.example`), and drafts the docker configurations.
+4.  **Automated CI/CD Validation**: The [Tester Agent](file:///c:/Users/Lenovo/Code/Software%20builder/agents/tester_agent.py) runs linters, security scans, and test suites.
+5.  **Self-Correction**: If any errors are found, the [Enhanced Problem Resolver](file:///c:/Users/Lenovo/Code/Software%20builder/agents/enhanced_problem_resolver.py) reads the logs and patches the files automatically.
+6.  **Preview Orchestration**: The [Live Preview Service](file:///c:/Users/Lenovo/Code/Software%20builder/services/live_preview_service.py) starts up container services, establishing a sandbox for runtime evaluation.
+
+---
+
+## 🤖 Directory of Specialized Agents
+
+All agents inherit from the `BaseAgent` class defined in [base_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/base_agent.py):
+
+| Agent | Source File | Responsibility |
+| :--- | :--- | :--- |
+| **Coordinator Agent** | [coordinator_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/coordinator_agent.py) | Analyzes input briefs, maps database entities, and schedules tasks. |
+| **Backend Agent** | [backend_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/backend_agent.py) | Synthesizes FastAPI routing, SQLAlchemy schemas, models, and tests. |
+| **Frontend Agent** | [frontend_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/frontend_agent.py) | Builds React + Vite views, Tailwind CSS styles, and API clients. |
+| **Integration Agent** | [integration_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/integration_agent.py) | Aggregates code, creates Docker Compose YAMLs, and generates READMEs. |
+| **Tester Agent** | [tester_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/tester_agent.py) | Generates and executes target test suites on generated modules. |
+| **Enhanced Problem Resolver** | [enhanced_problem_resolver.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/enhanced_problem_resolver.py) | Parses output exceptions and logs to automatically repair code modules. |
+| **Security Agent** | [security_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/security_agent.py) | Audits generated source modules using static application security testing (SAST). |
+| **Quality Agent** | [quality_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/quality_agent.py) | Inspects style formatting, import orders, and file layouts. |
+| **Optimization Agent** | [optimization_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/optimization_agent.py) | Assesses runtime execution paths and profiles generated code database queries. |
+| **Documentation Agent** | [documentation_agent.py](file:///c:/Users/Lenovo/Code/Software%20builder/agents/documentation_agent.py) | Compiles developer setup guides and API specifications. |
+
+---
+
+## ✨ Key Platform Features
+
+*   **Self-Healing Diagnostics**: Integrates an iterative, feedback-driven code repair loop that automatically debugs compilation, linting, and unit-testing failures.
+*   **Docker Container Sandboxing**: Deploys generated apps inside isolated containers using the Python Docker SDK, enforcing resource constraints and security policies to safeguard host environments.
+*   **Persistent Workflow State**: Built on top of LangGraph workflows with state persistence to allow resuming or recovering builds in the event of an outage or error.
+*   **Integrated Verification**: Evaluates code through static analysis scanners (`Bandit`), quality formatters (`Black`, `Isort`), style checkers (`Pylint`), and test runners (`Pytest`).
+*   **Interactive Control Panel**: Features a Vue 3 dashboard displaying real-time build graphs, live streaming logs via WebSockets, sandbox preview health, and performance statistics.
+*   **Learning Engine**: Employs an experience-driven subsystem that remembers build-fix patterns, improving generation accuracy over time.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+Ensure you have the following installed on your system:
+*   Python 3.10+
+*   Docker & Docker Compose
+*   A Google Gemini API key
+
+### 2. Installation
+Clone the repository and install all dependencies:
+```bash
+# Install packages
+pip install -r requirements.txt
+```
+
+### 3. Environment Configuration
+Create a `.env` file in the project root:
+```bash
+cp .env.example .env
+```
+Open `.env` and add your Google Gemini API Key:
+```env
+GOOGLE_API_KEY=your_gemini_api_key_here
+```
+
+### 4. Running the Platform
+Launch the coordinator server:
+```bash
+# Start the FastAPI application coordinator
+python main.py
+```
+To access the platform interfaces:
+*   **Control Panel Dashboard**: [http://localhost:5000](http://localhost:5000)
+*   **API Documentation (Swagger)**: [http://localhost:5000/docs](http://localhost:5000/docs)
+*   **Prometheus Metrics Endpoint**: [http://localhost:5000/metrics](http://localhost:5000/metrics)
+
+---
+
+## 🧪 Testing
+
+The codebase includes comprehensive unit, API, and integration test suites:
 
 ```bash
-# Unit/API tests (FastAPI TestClient with a stubbed workflow)
-pytest -q
+# Run unit and API router tests
+pytest
 
-# Full end-to-end suite (requires a valid GOOGLE_API_KEY and running coordinator)
+# Run the comprehensive integration test suite (requires a valid API key)
 python comprehensive_test.py
 
-# Windows convenience script (lint, tests, optional E2E)
+# Windows convenience verification script
 powershell -ExecutionPolicy Bypass -File scripts/run_all_tests.ps1 -E2E
 ```
 
-## Usage
+---
 
-1. Open the Coordinator UI at http://localhost:5000
-2. Enter a project brief (e.g., "Build a task management app with user authentication")
-3. Watch as agents plan, generate, and integrate the application
-4. View the generated code, logs, and test results
-5. Access your running app in the embedded preview
-
-## Project Structure
+## 📂 Project Structure
 
 ```
-├── coordinator/          # Main orchestration agent
-│   ├── agents/          # Agent implementations
-│   ├── workflows/       # LangGraph workflows
-│   ├── ui/              # Testing UI
-│   └── config/          # Configuration
-├── agents/              # Specialized agents
-│   ├── frontend/        # Frontend generation agent
-│   ├── backend/         # Backend generation agent
-│   └── shared/          # Shared utilities
-├── generated/           # Generated applications
-├── docker-compose.yml   # Integration environment
-└── docs/               # Documentation
+├── main.py                  # Entry point for the platform (FastAPI runner)
+├── coordinator/             # Central coordinator application
+│   ├── main.py              # Main API server, proxy server, and routing logic
+│   ├── services/            # Coordinator-scoped services
+│   ├── ui/                  # Vue Dashboard static assets
+│   └── workflows/           # LangGraph flows
+├── agents/                  # Specialized AI Agent implementations
+├── api/                     # API routers (endpoints for chat, status, actions)
+├── services/                # Core platform services (sandbox, state, metrics, registry)
+├── workflows/               # Orchestration workflows (AppBuilderWorkflowFixed, EnhancedAppBuilderWorkflow)
+├── ui/                      # Alternate control panel UI files (index.html)
+├── generated/               # Output folder where generated apps are saved
+├── docs/                    # Architecture diagrams, protocols, and manuals
+└── tests/                   # Test suite files
 ```
 
-## Example
+---
 
-```python
-from coordinator import AppBuilder
+## 📝 License
 
-builder = AppBuilder()
-result = builder.build_from_brief(
-    "Build a task management app with user authentication and task sharing"
-)
-
-print(f"Status: {result.status}")
-print(f"App URL: {result.app_url}")
-print(f"Source: {result.source_path}")
-```
-
-## Features
-
-- **One-Command Deployment**: Generated apps run with `docker-compose up`
-- **Structured Communication**: Agents use JSON task specifications
-- **State Persistence**: LangGraph maintains recoverable workflow state
-- **Validation**: Automated testing, linting, and build verification
-- **Iterative Refinement**: AutoGen dialogues for clarification
-- **Extensibility**: Semantic Kernel for dynamic tool integration
-
-## Documentation
-
-- [Architecture Guide](docs/architecture.md)
-- [Agent Communication Protocol](docs/protocol.md)
-- [Workflow Diagrams](docs/workflows.md)
-- [API Reference](docs/api.md)
-
-## License
-
-MIT
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
