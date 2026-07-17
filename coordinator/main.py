@@ -134,9 +134,31 @@ except Exception as e:
 settings = Settings()
 
 # Add CORS middleware using settings
+cors_origins = list(settings.cors_allow_origins)
+domain = os.getenv("DOMAIN")
+if domain:
+    clean_domain = domain.replace("http://", "").replace("https://", "").split(":")[0]
+    cors_origins.extend([
+        f"http://{clean_domain}",
+        f"https://{clean_domain}",
+        f"http://{clean_domain}:3000",
+        f"http://{clean_domain}:5000",
+    ])
+cors_origins.extend([
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000",
+    "http://127.0.0.1:5173",
+    "http://localhost",
+    "http://127.0.0.1",
+])
+cors_origins = list(set([o for o in cors_origins if o != "*"]))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allow_origins,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
