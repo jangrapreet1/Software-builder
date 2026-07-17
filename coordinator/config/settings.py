@@ -22,12 +22,7 @@ class Settings(BaseSettings):
     coordinator_port: int = 5000
     backend_port: int = 8000
     frontend_port: int = 3000
-    cors_allow_origins: list[str] = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5000",
-        "http://127.0.0.1:5000",
-    ]
+    cors_allow_origins: list[str] = ["*"]
     
     # Generated Apps Directory
     generated_apps_dir: str = Field(
