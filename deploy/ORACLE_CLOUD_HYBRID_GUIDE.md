@@ -313,3 +313,7 @@ psql -h DB_PRIVATE_IP -U softwarebuilder -d appbuilder
 # Check logs
 docker-compose -f deploy/docker-compose.hybrid.yml logs
 ```
+
+
+
+private ip :- 10.0.0.195 

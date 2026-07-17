@@ -9,6 +9,7 @@ from pathlib import Path
 # Set environment variables before importing any modules
 os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 os.environ.setdefault("USE_FAKE_WORKFLOW", "1")
+os.environ.setdefault("APPBUILDER_ALLOW_TEMP_ROOTS", "1")
 
 # Ensure coordinator dir is on sys.path
 COORDINATOR_DIR = Path(__file__).resolve().parents[1] / "coordinator"

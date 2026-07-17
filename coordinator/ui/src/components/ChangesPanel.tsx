@@ -40,7 +40,6 @@ export const ChangesPanel: React.FC<ChangesPanelProps> = ({ sessionId, contextRo
     if (!edits.length && suggestedPath) {
       setEdits([{ id: crypto.randomUUID(), path: suggestedPath, old: '', new: '' }]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggestedPath]);
 
   const setRow = (id: string, patch: Partial<EditRow>) => {

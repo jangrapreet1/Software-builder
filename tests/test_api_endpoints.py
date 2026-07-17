@@ -22,6 +22,7 @@ def test_client():
     import os
     os.environ.setdefault("GOOGLE_API_KEY", "test-key")
     os.environ.setdefault("USE_FAKE_WORKFLOW", "1")
+    os.environ.setdefault("APPBUILDER_ALLOW_TEMP_ROOTS", "1")
     
     import sys
     from pathlib import Path
@@ -509,6 +510,24 @@ class TestFileSystemEndpoints:
         })
         
         assert response.status_code in [200, 204, 404]
+
+    def test_fs_rejects_path_escape(self, test_client, sample_project_dir):
+        """Test that relative paths cannot escape the selected root."""
+        response = test_client.get("/api/fs/read", params={
+            "root": sample_project_dir,
+            "path": "../outside.txt"
+        })
+
+        assert response.status_code == 400
+
+    def test_fs_delete_rejects_root(self, test_client, sample_project_dir):
+        """Test that delete cannot target the selected root directory."""
+        response = test_client.delete("/api/fs/delete", params={
+            "root": sample_project_dir,
+            "path": "."
+        })
+
+        assert response.status_code == 400
     
     def test_fs_list_invalid_root(self, test_client):
         """Test listing with invalid root path"""
@@ -539,6 +558,10 @@ class TestSecretsEndpoints:
         })
         
         assert response.status_code in [200, 404]
+        if response.status_code == 200:
+            data = response.json()
+            assert data["secrets"]["TEST_KEY"]["set"] is True
+            assert "test_value" not in json.dumps(data)
     
     def test_secrets_set(self, test_client, sample_project_dir):
         """Test setting a secret"""
@@ -754,6 +777,59 @@ class TestBuildWorkflowIntegration:
                 build_ids = []
             
             assert build_id in build_ids or len(build_ids) > 0
+
+
+class TestFrameworkPolymorphism:
+    """Test frontend/backend agents polymorphic framework generation"""
+    
+    @pytest.mark.asyncio
+    async def test_express_backend_agent(self):
+        from agents.backend_agent import BackendAgent
+        from config.settings import Settings
+        
+        # Mock LLM
+        mock_llm = Mock()
+        settings = Settings(google_api_key="mock-key")
+        
+        agent = BackendAgent(mock_llm, settings)
+        
+        # Test generation with Express
+        code = await agent.generate_code(
+            tasks=[],
+            entities=[],
+            specs={"preferred_backend": "express"}
+        )
+        
+        assert "files" in code
+        assert "package.json" in code["files"]
+        assert "server.js" in code["files"]
+        assert "db.js" in code["files"]
+        assert "Dockerfile" in code["files"]
+        assert "express" in code["files"]["package.json"]
+
+    @pytest.mark.asyncio
+    async def test_nextjs_frontend_agent(self):
+        from agents.frontend_agent import FrontendAgent
+        from config.settings import Settings
+        
+        mock_llm = Mock()
+        settings = Settings(google_api_key="mock-key")
+        
+        agent = FrontendAgent(mock_llm, settings)
+        
+        code = await agent.generate_code(
+            tasks=[],
+            user_flows=[],
+            specs={"preferred_frontend": "nextjs"},
+            backend_code={}
+        )
+        
+        assert "files" in code
+        assert "package.json" in code["files"]
+        assert "src/app/layout.tsx" in code["files"]
+        assert "src/app/page.tsx" in code["files"]
+        assert "Dockerfile" in code["files"]
+        assert "next" in code["files"]["package.json"]
 
 
 # ==============================================================================

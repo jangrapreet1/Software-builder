@@ -168,18 +168,9 @@ class EnhancedProblemResolverAgent:
         elif not (app_path_obj / "requirements.txt").exists() and (app_path_obj / "backend" / "requirements.txt").exists():
             context_dir = app_path_obj / "backend"
 
-        # Provide sensible defaults if commands are missing
+        # Commands must be explicit. An empty command set means diagnose via
+        # static analysis only; it should not spawn package managers implicitly.
         commands = commands or {"build": [], "run": [], "test": []}
-        if not commands.get("build"):
-            if (context_dir / "package.json").exists():
-                commands["build"] = ["npm", "ci", "&&", "npm", "run", "build"]
-            elif (context_dir / "requirements.txt").exists():
-                commands["build"] = ["pip", "install", "-r", "requirements.txt"]
-        if not commands.get("run"):
-            if (context_dir / "package.json").exists():
-                commands["run"] = ["npm", "run", "preview", "--", "--port", "3000", "--host", "0.0.0.0"]
-            elif (context_dir / "requirements.txt").exists():
-                commands["run"] = ["python", "main.py"]
 
         run_id = str(uuid.uuid4())
         

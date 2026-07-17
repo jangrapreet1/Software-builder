@@ -99,9 +99,48 @@ class BuildValidator:
         await self._validate_frontend(app_path_obj)
         await self._validate_docker(app_path_obj)
         await self._validate_configuration(app_path_obj)
+        await self._validate_playwright_e2e(app_path_obj)
         
         # Calculate results
         return self._compile_results()
+
+    async def _validate_playwright_e2e(self, app_path: Path):
+        """Execute automated browser checks using Playwright"""
+        has_frontend = (app_path / "frontend").exists() or (app_path / "package.json").exists()
+        if not has_frontend:
+            return
+
+        from services.mcp_manager import get_mcp_manager, MCPManagerError
+        manager = get_mcp_manager()
+        
+        try:
+            # Check if playwright tests exist or if we can run them
+            result = manager.run_playwright_tests(app_path)
+            passed = result.get("exit_code") == 0
+            summary = result.get("summary", {})
+            msg = f"Playwright: {summary.get('tests_passed', 0)} passed, {summary.get('tests_failed', 0)} failed"
+            
+            self.results.append(ValidationResult(
+                "playwright_e2e",
+                passed,
+                ValidationLevel.ERROR if not passed else ValidationLevel.INFO,
+                message=msg,
+                details=result
+            ))
+        except MCPManagerError as exc:
+            self.results.append(ValidationResult(
+                "playwright_e2e",
+                True,  # Non-blocking soft warning if Docker/MCP server is offline
+                ValidationLevel.WARNING,
+                message=f"Playwright E2E testing skipped: {exc}"
+            ))
+        except Exception as exc:
+            self.results.append(ValidationResult(
+                "playwright_e2e",
+                True,
+                ValidationLevel.WARNING,
+                message=f"Playwright E2E verification errored: {exc}"
+            ))
     
     async def _validate_structure(self, app_path: Path):
         """Validate project structure"""

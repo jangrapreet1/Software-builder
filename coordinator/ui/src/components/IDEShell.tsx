@@ -86,7 +86,7 @@ export const IDEShell: React.FC<IDEShellProps> = ({ root, onRun, onStop, onBack,
     const [rightSidebarWidth, setRightSidebarWidth] = useState(320);
     const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
     const [showChatPanel, setShowChatPanel] = useState(true);
-    const [chatSessionId, setChatSessionId] = useState<string>('');
+    const [_chatSessionId, setChatSessionId] = useState<string>('');
 
     // Bottom panel state
     const [bottomPanelHeight, setBottomPanelHeight] = useState(180);

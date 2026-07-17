@@ -45,7 +45,6 @@ export const FileTree: React.FC<FileTreeProps> = ({ root, onSelectFile }) => {
 
   useEffect(() => {
     loadDir('.');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [root]);
 
   const toggle = async (rel: string) => {

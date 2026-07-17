@@ -4,13 +4,18 @@ interface SecretsPanelProps {
   root: string;
 }
 
+interface SecretMetadata {
+  set: boolean;
+  length?: number;
+}
+
 interface SecretsResponse {
   path: string;
-  secrets: Record<string, string>;
+  secrets: Record<string, SecretMetadata | string>;
 }
 
 export const SecretsPanel: React.FC<SecretsPanelProps> = ({ root }) => {
-  const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [secrets, setSecrets] = useState<Record<string, SecretMetadata | string>>({});
   const [filename, setFilename] = useState('.env');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +95,12 @@ export const SecretsPanel: React.FC<SecretsPanelProps> = ({ root }) => {
 
   const populateForm = (key: string) => {
     setKeyInput(key);
-    setValueInput(secrets[key] ?? '');
+    setValueInput('');
+  };
+
+  const secretLabel = (secret: SecretMetadata | string) => {
+    const length = typeof secret === 'string' ? secret.length : secret.length;
+    return typeof length === 'number' ? `Set (${length} chars)` : 'Set';
   };
 
   return (
@@ -134,13 +144,14 @@ export const SecretsPanel: React.FC<SecretsPanelProps> = ({ root }) => {
                 <tr key={key} className="hover:bg-white/5 transition-colors group">
                   <td className="px-3 py-2 font-mono text-primary/90 break-all align-top">{key}</td>
                   <td className="px-3 py-2 break-all align-top text-gray-400 group-hover:text-gray-200">
-                    <span className="blur-[2px] hover:blur-none transition-all cursor-text">{secrets[key]}</span>
+                    <span>{secretLabel(secrets[key])}</span>
                   </td>
                   <td className="px-3 py-2 text-right align-top">
                     <button
                       type="button"
                       onClick={() => populateForm(key)}
                       className="px-2 py-1 text-primary hover:text-white transition-colors text-[10px] opacity-0 group-hover:opacity-100"
+                      title="Replace secret value"
                     >
                       <i className="fas fa-pen"></i>
                     </button>

@@ -198,6 +198,7 @@
                 <div class="mb-4 flex space-x-2 text-sm">
                     <button @click="activeTab = 'Status'" :class="tabClass('Status')">Status</button>
                     <button @click="activeTab = 'Logs'" :class="tabClass('Logs')">Logs</button>
+                    <button @click="activeTab = 'Editor'" :class="tabClass('Editor')">Editor</button>
                     <button @click="activeTab = 'Preview'" :class="tabClass('Preview')">Preview</button>
                     <button @click="activeTab = 'Metrics'" :class="tabClass('Metrics')">Metrics</button>
                     <button @click="activeTab = 'Errors'" :class="tabClass('Errors')">Errors</button>
@@ -228,6 +229,41 @@
                         <div>
                             <span class="text-gray-700">{{ log.message }}</span>
                             <span class="text-gray-400 text-xs ml-2">{{ formatTime(log.timestamp) }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Editor Tab -->
+                <div v-if="activeTab === 'Editor'" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <!-- File Tree Sidebar -->
+                        <div class="border rounded p-3 bg-gray-50 h-[500px] overflow-y-auto">
+                            <h3 class="font-semibold text-sm mb-3 pb-2 border-b flex items-center justify-between">
+                                <span><i class="fas fa-folder-open mr-2 text-gray-500"></i>Files</span>
+                                <button @click="loadFileTree" class="text-xs text-blue-600 hover:underline"><i class="fas fa-sync-alt"></i></button>
+                            </h3>
+                            <ul class="space-y-1 text-sm font-mono">
+                                <li v-if="fileTree.length === 0" class="text-gray-400 text-xs italic">No files loaded. Select a successful build!</li>
+                                <li v-for="item in fileTree" :key="item.path" @click="selectFile(item)" :class="fileItemClass(item)" class="cursor-pointer p-1 rounded hover:bg-gray-200 transition flex items-center space-x-2">
+                                    <i class="fas" :class="fileIcon(item)"></i>
+                                    <span class="truncate" :title="item.path">{{ item.name }}</span>
+                                </li>
+                            </ul>
+                        </div>
+                        
+                        <!-- Editor Workspace -->
+                        <div class="md:col-span-3 border rounded flex flex-col h-[500px]">
+                            <div class="bg-gray-100 px-4 py-2 border-b flex justify-between items-center text-sm">
+                                <span class="font-mono text-gray-700 truncate" v-if="activeFile">{{ activeFile.path }}</span>
+                                <span class="text-gray-400 italic" v-else>Select a file to edit</span>
+                                <div class="flex space-x-2">
+                                    <button @click="saveActiveFile" :disabled="!activeFile || savingFile" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded text-xs transition flex items-center space-x-1">
+                                        <i class="fas" :class="savingFile ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+                                        <span>Save</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="monaco-editor-container" class="flex-1 w-full bg-white h-full relative" style="min-height: 400px;"></div>
                         </div>
                     </div>
                 </div>
@@ -391,12 +427,24 @@
                     metrics: { builds: { total: 0, successful: 0, failed: 0 } },
                     preview: { project_name: '', project_path: '', status: '', urls: {} },
                     errorHelper: { enhanced: null },
+                    fileTree: [],
+                    activeFile: null,
+                    savingFile: false,
+                    monacoEditor: null,
                     examples: [
                         'Build a task management app with user authentication',
                         'Create a blog platform with comments and likes',
                         'Build an e-commerce store with shopping cart',
                         'Create a recipe sharing app with search'
                     ]
+                }
+            },
+            watch: {
+                activeTab(newTab) {
+                    if (newTab === 'Editor') {
+                        this.initMonaco();
+                        this.loadFileTree();
+                    }
                 }
             },
             mounted() {
@@ -596,6 +644,146 @@
                         this.errorHelper.enhanced = data;
                         this.activeTab = 'Errors';
                     } catch {}
+                },
+                async loadFileTree() {
+                    if (!this.currentBuild || !this.currentBuild.source_path) return;
+                    try {
+                        const root = this.currentBuild.source_path;
+                        this.fileTree = [];
+                        await this.traverseDirectory(root, '.');
+                    } catch (e) {
+                        console.error('Failed to load file tree:', e);
+                    }
+                },
+                async traverseDirectory(root, relPath) {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/api/fs/list?root=${encodeURIComponent(root)}&path=${encodeURIComponent(relPath)}`);
+                        const data = await res.json();
+                        if (data && data.items) {
+                            for (const item of data.items) {
+                                if (item.type === 'directory') {
+                                    if (['node_modules', '.git', '__pycache__', '.pytest_cache', 'dist', '.sb_artifacts'].includes(item.name)) {
+                                        continue;
+                                    }
+                                    await this.traverseDirectory(root, item.path);
+                                } else {
+                                    this.fileTree.push(item);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error traversing directory:', e);
+                    }
+                },
+                async selectFile(item) {
+                    try {
+                        const root = this.currentBuild.source_path;
+                        const res = await fetch(`${this.apiUrl}/api/fs/read?root=${encodeURIComponent(root)}&path=${encodeURIComponent(item.path)}`);
+                        const data = await res.json();
+                        if (data && data.content !== undefined) {
+                            this.activeFile = { ...item, content: data.content };
+                            if (this.monacoEditor) {
+                                this.monacoEditor.setValue(data.content);
+                                let lang = 'plaintext';
+                                const lower = item.name.toLowerCase();
+                                if (lower.endsWith('.py')) lang = 'python';
+                                else if (lower.endsWith('.js') || lower.endsWith('.jsx')) lang = 'javascript';
+                                else if (lower.endsWith('.ts') || lower.endsWith('.tsx')) lang = 'typescript';
+                                else if (lower.endsWith('.json')) lang = 'json';
+                                else if (lower.endsWith('.html')) lang = 'html';
+                                else if (lower.endsWith('.css')) lang = 'css';
+                                else if (lower.endsWith('.md')) lang = 'markdown';
+                                else if (lower.endsWith('.yml') || lower.endsWith('.yaml')) lang = 'yaml';
+                                
+                                const model = this.monacoEditor.getModel();
+                                if (model) {
+                                    monaco.editor.setModelLanguage(model, lang);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        alert('Failed to read file: ' + e.message);
+                    }
+                },
+                async saveActiveFile() {
+                    if (!this.activeFile || !this.monacoEditor) return;
+                    this.savingFile = true;
+                    try {
+                        const root = this.currentBuild.source_path;
+                        const content = this.monacoEditor.getValue();
+                        const res = await fetch(`${this.apiUrl}/api/fs/write`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                root,
+                                path: this.activeFile.path,
+                                content
+                            })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.status === 'success') {
+                            this.activeFile.content = content;
+                            alert('File saved successfully!');
+                        } else {
+                            alert('Failed to save file');
+                        }
+                    } catch (e) {
+                        alert('Error saving file: ' + e.message);
+                    } finally {
+                        this.savingFile = false;
+                    }
+                },
+                initMonaco() {
+                    this.$nextTick(() => {
+                        const container = document.getElementById('monaco-editor-container');
+                        if (!container) return;
+                        if (this.monacoEditor) {
+                            this.monacoEditor.layout();
+                            return;
+                        }
+                        if (typeof monaco === 'undefined') {
+                            const loaderScript = document.createElement('script');
+                            loaderScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js';
+                            loaderScript.onload = () => {
+                                require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+                                require(['vs/editor/editor.main'], () => {
+                                    this.createEditorInstance(container);
+                                });
+                            };
+                            document.head.appendChild(loaderScript);
+                        } else {
+                            this.createEditorInstance(container);
+                        }
+                    });
+                },
+                createEditorInstance(container) {
+                    this.monacoEditor = monaco.editor.create(container, {
+                        value: this.activeFile ? this.activeFile.content : '',
+                        language: 'plaintext',
+                        theme: 'vs-dark',
+                        automaticLayout: true,
+                        minimap: { enabled: false },
+                        fontSize: 13
+                    });
+                    
+                    this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                        this.saveActiveFile();
+                    });
+                },
+                fileIcon(item) {
+                    const lower = item.name.toLowerCase();
+                    if (lower.endsWith('.py')) return 'fa-file-code text-green-500';
+                    if (lower.endsWith('.js') || lower.endsWith('.jsx')) return 'fa-file-code text-yellow-500';
+                    if (lower.endsWith('.ts') || lower.endsWith('.tsx')) return 'fa-file-code text-blue-500';
+                    if (lower.endsWith('.json')) return 'fa-file-code text-yellow-600';
+                    if (lower.endsWith('.html')) return 'fa-file-code text-orange-500';
+                    if (lower.endsWith('.css')) return 'fa-file-code text-indigo-500';
+                    if (lower.endsWith('.md')) return 'fa-file-alt text-gray-500';
+                    return 'fa-file text-gray-400';
+                },
+                fileItemClass(item) {
+                    const isSelected = this.activeFile && this.activeFile.path === item.path;
+                    return isSelected ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-700';
                 }
             }
         }).mount('#app');

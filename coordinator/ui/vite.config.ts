@@ -1,26 +1,25 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const coordinatorTarget = 'http://localhost:5000';
+
 export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
       '/api': {
-        target: 'https://localhost:5443',
+        target: coordinatorTarget,
         changeOrigin: true,
-        secure: false,
         ws: true
       },
       '/ws': {
-        target: 'https://localhost:5443',
+        target: coordinatorTarget,
         changeOrigin: true,
-        secure: false,
         ws: true
       },
       '/health': {
-        target: 'https://localhost:5443',
+        target: coordinatorTarget,
         changeOrigin: true,
-        secure: false,
         ws: true
       }
     }

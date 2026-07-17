@@ -61,6 +61,7 @@ from services.agent_collaboration_manager import CollaborationManager, LivePrevi
 from services.metrics_collector import get_metrics_collector
 from services.activity_notifier import subscribe as activity_subscribe, unsubscribe as activity_unsubscribe
 from services.error_handler_middleware import add_error_handling
+from services.path_policy import PathPolicyError, allowed_roots, ensure_allowed_root, resolve_safe_path
 from api.chat_endpoints import router as chat_router, initialize_chat_metrics
 from agents.problem_resolver_agent import ProblemResolverAgent
 from agents.enhanced_problem_resolver import EnhancedProblemResolverAgent, RunMode
@@ -145,6 +146,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
 GENERATED_DIR = Path(settings.generated_apps_dir).resolve()
+LOCAL_CONTROL_ALLOWED_ROOTS = allowed_roots([REPO_ROOT, GENERATED_DIR])
 build_registry = BuildRegistry(REPO_ROOT)
 build_registry.bootstrap_from_generated(GENERATED_DIR)
 run_audit_logger = RunAuditLogger(str(REPO_ROOT / ".sb_artifacts"))
@@ -202,25 +204,21 @@ LAST_PREVIEW_TARGET_BY_IP: Dict[str, str] = {}
 LAUNCH_RETRY_STATE: Dict[str, Dict] = {}
 
 # Initialize sandbox services
+session_manager = SessionManager(default_session_duration=3600)
+permission_manager = PermissionManager(default_expiry=3600)
+app.state.session_manager = session_manager
+app.state.permission_manager = permission_manager
+
 try:
     sandbox_orchestrator = SandboxOrchestrator(
         network_name=settings.docker_network,
         default_timeout=3600,
         idle_timeout=300,
     )
-    session_manager = SessionManager(default_session_duration=3600)
-    permission_manager = PermissionManager(default_expiry=3600)
-    # Expose managers on app state for other routers/modules
-    app.state.session_manager = session_manager
-    app.state.permission_manager = permission_manager
     console.print("[green]✓ Sandbox orchestrator initialized[/green]")
 except Exception as e:
     console.print(f"[yellow]⚠ Sandbox orchestrator unavailable: {e}[/yellow]")
     sandbox_orchestrator = None
-    session_manager = None
-    permission_manager = None
-    app.state.session_manager = None
-    app.state.permission_manager = None
 
 # Initialize Phase 2 agents and managers
 try:
@@ -679,12 +677,12 @@ async def detect_repository(payload: DetectionRequest, request: Request):
     Returns a detection report for user approval. Persists report to .sb_artifacts/.
     """
     try:
-        repo_path = Path(payload.repo_path)
-
-        if not repo_path.is_absolute():
-            repo_path = (REPO_ROOT / repo_path).resolve()
-        else:
-            repo_path = repo_path.resolve()
+        requested_path = Path(payload.repo_path).expanduser()
+        is_rooted = requested_path.is_absolute() or str(payload.repo_path).startswith(("/", "\\"))
+        candidate_path = requested_path.resolve() if is_rooted else (REPO_ROOT / requested_path).resolve()
+        if not candidate_path.exists():
+            raise HTTPException(status_code=404, detail=f"Repository path not found: {payload.repo_path}")
+        repo_path = _resolve_allowed_root(candidate_path)
         
         console.print(f"[cyan]Detect request path:[/cyan] {repo_path} (exists={repo_path.exists()})")
 
@@ -714,7 +712,7 @@ async def get_latest_detection(repo_path: str):
     Get the latest detection report for a repository
     """
     try:
-        repo_path_obj = Path(repo_path).resolve()
+        repo_path_obj = _resolve_allowed_root(repo_path)
         
         if not repo_path_obj.exists():
             # Avoid 404s: return graceful error payload
@@ -792,7 +790,10 @@ async def preview_app(preview: PreviewRequest, request: Request):
         raise HTTPException(status_code=503, detail="Session manager not available")
     
     try:
-        app_path = Path(preview.app_path).resolve()
+        preview_candidate = Path(preview.app_path).expanduser()
+        if not preview_candidate.exists():
+            raise HTTPException(status_code=404, detail=f"Application path not found: {preview.app_path}")
+        app_path = _resolve_allowed_root(preview.app_path)
         
         if not app_path.exists():
             raise HTTPException(status_code=404, detail=f"Application path not found: {preview.app_path}")
@@ -824,6 +825,8 @@ async def preview_app(preview: PreviewRequest, request: Request):
             "message": "Preview session created. Launch instance to start the application."
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         console.print(f"[bold red]Preview error:[/bold red] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1301,7 +1304,10 @@ async def launch_app(request: LaunchRequest, req: Request):
         raise HTTPException(status_code=503, detail="Sandbox orchestrator not available")
     
     try:
-        app_path = Path(request.app_path).resolve()
+        launch_candidate = Path(request.app_path).expanduser()
+        if not launch_candidate.exists():
+            raise HTTPException(status_code=404, detail=f"Application path not found: {request.app_path}")
+        app_path = _resolve_allowed_root(request.app_path)
         
         if not app_path.exists():
             raise HTTPException(status_code=404, detail=f"Application path not found: {request.app_path}")
@@ -1565,7 +1571,10 @@ async def download_app(app_path: str):
         import io
         import fnmatch
         
-        app_path_obj = Path(app_path).resolve()
+        download_candidate = Path(app_path).expanduser()
+        if not download_candidate.exists():
+            raise HTTPException(status_code=404, detail=f"Application path not found: {app_path}")
+        app_path_obj = _resolve_allowed_root(app_path)
         
         if not app_path_obj.exists():
             raise HTTPException(status_code=404, detail=f"Application path not found: {app_path}")
@@ -1629,7 +1638,7 @@ async def download_app(app_path: str):
 async def list_instances():
     """List all active sandbox instances"""
     if not sandbox_orchestrator:
-        raise HTTPException(status_code=503, detail="Sandbox orchestrator not available")
+        return {"instances": [], "count": 0, "status": "unavailable"}
     
     try:
         instances = sandbox_orchestrator.list_instances()
@@ -1642,7 +1651,11 @@ async def list_instances():
 async def get_instance_status(instance_id: str):
     """Get status and health of a sandbox instance"""
     if not sandbox_orchestrator:
-        raise HTTPException(status_code=503, detail="Sandbox orchestrator not available")
+        return {
+            "error": "instance_not_found",
+            "instance_id": instance_id,
+            "message": "Sandbox orchestrator not available",
+        }
     
     try:
         status = await sandbox_orchestrator.get_instance_status(instance_id)
@@ -1658,7 +1671,12 @@ async def get_instance_status(instance_id: str):
 async def get_instance_logs(instance_id: str, tail: int = 100):
     """Get logs from a sandbox instance"""
     if not sandbox_orchestrator:
-        raise HTTPException(status_code=503, detail="Sandbox orchestrator not available")
+        return {
+            "error": "instance_not_found",
+            "instance_id": instance_id,
+            "message": "Sandbox orchestrator not available",
+            "logs": [],
+        }
     
     try:
         logs = await sandbox_orchestrator.get_instance_logs(instance_id, tail=tail)
@@ -1687,7 +1705,7 @@ async def sandbox_health():
 async def session_stats():
     """Get session manager statistics"""
     if not session_manager:
-        raise HTTPException(status_code=503, detail="Session manager not available")
+        return {"active_sessions": 0, "total_sessions_created": 0, "status": "unavailable"}
     
     return session_manager.get_stats()
 
@@ -1905,7 +1923,7 @@ async def stop_live_preview(build_id: str):
 async def get_preview_status(build_id: str):
     """Get status of a live preview"""
     if not live_preview_bridge:
-        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+        raise HTTPException(status_code=404, detail="Preview not found")
     
     status = live_preview_bridge.get_preview_status(build_id)
     if not status:
@@ -1918,7 +1936,7 @@ async def get_preview_status(build_id: str):
 async def list_previews():
     """List all active live previews"""
     if not live_preview_bridge:
-        raise HTTPException(status_code=503, detail="Live preview bridge not available")
+        return {"previews": [], "count": 0, "status": "unavailable"}
     
     previews = live_preview_bridge.get_all_previews()
     return {"previews": list(previews.values()), "count": len(previews)}
@@ -2299,7 +2317,7 @@ async def get_build_checkpoints(build_id: str):
     try:
         if not enhanced_workflow:
             raise HTTPException(
-                status_code=503,
+                status_code=404,
                 detail="Enhanced workflow required for checkpoint access"
             )
         
@@ -2374,16 +2392,46 @@ class FSRenameRequest(BaseModel):
 
 
 def _resolve_safe_path(root: str, rel_path: str) -> Path:
-    base = Path(root).resolve()
-    target = (base / rel_path).resolve()
-    if not str(target).startswith(str(base)):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    return target
+    try:
+        _, target = resolve_safe_path(root, rel_path, LOCAL_CONTROL_ALLOWED_ROOTS)
+        return target
+    except PathPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _resolve_allowed_root(root: str) -> Path:
+    try:
+        return ensure_allowed_root(root, LOCAL_CONTROL_ALLOWED_ROOTS)
+    except PathPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _reject_root_target(base: Path, target: Path, operation: str) -> None:
+    if target == base:
+        raise HTTPException(status_code=400, detail=f"Cannot {operation} the root directory")
+
+
+def _secret_metadata(value: str) -> dict:
+    return {"set": True, "length": len(value)}
+
+
+def _validate_secret_key(key: str) -> str:
+    cleaned = key.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cleaned):
+        raise HTTPException(status_code=400, detail="Secret key must be a valid environment variable name")
+    return cleaned
+
+
+def _validate_secret_filename(filename: str) -> str:
+    cleaned = filename.strip() or ".env"
+    if Path(cleaned).name != cleaned or not cleaned.startswith(".env"):
+        raise HTTPException(status_code=400, detail="Secrets can only be stored in .env files")
+    return cleaned
 
 
 @app.get("/api/fs/list")
 async def fs_list(root: str, path: str = "."):
-    base = Path(root).resolve()
+    base = _resolve_allowed_root(root)
     target = _resolve_safe_path(root, path)
     # If root or target path does not exist, return empty directory listing instead of 404
     if not base.exists() or not target.exists():
@@ -2448,32 +2496,39 @@ class SecretSetRequest(BaseModel):
 
 @app.get("/api/secrets/list")
 async def secrets_list(root: str, filename: str = ".env"):
-    base = Path(root).resolve()
-    env_file = _resolve_safe_path(root, filename)
-    secrets: Dict[str, str] = {}
+    base = _resolve_allowed_root(root)
+    safe_filename = _validate_secret_filename(filename)
+    env_file = _resolve_safe_path(root, safe_filename)
+    secrets: Dict[str, dict] = {}
     if env_file.exists() and env_file.is_file():
         for line in env_file.read_text(encoding="utf-8").splitlines():
             if not line or line.strip().startswith("#"):
                 continue
             if "=" in line:
                 k, v = line.split("=", 1)
-                secrets[k.strip()] = v.strip()
+                secrets[k.strip()] = _secret_metadata(v.strip())
     return {"path": str(env_file.relative_to(base)), "secrets": secrets}
 
 
 @app.post("/api/secrets/set")
 async def secrets_set(req: SecretSetRequest):
-    env_file = _resolve_safe_path(req.root, req.filename)
-    existing: Dict[str, str] = {}
+    key = _validate_secret_key(req.key)
+    env_file = _resolve_safe_path(req.root, _validate_secret_filename(req.filename))
+    lines: list[str] = []
+    replaced = False
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
-            if not line or line.strip().startswith("#"):
+            if not line.strip() or line.strip().startswith("#") or "=" not in line:
+                lines.append(line)
                 continue
-            if "=" in line:
-                k, v = line.split("=", 1)
-                existing[k.strip()] = v.strip()
-    existing[req.key] = req.value
-    lines = [f"{k}={v}" for k, v in existing.items()]
+            existing_key, _ = line.split("=", 1)
+            if existing_key.strip() == key:
+                lines.append(f"{key}={req.value}")
+                replaced = True
+            else:
+                lines.append(line)
+    if not replaced:
+        lines.append(f"{key}={req.value}")
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"status": "success"}
@@ -2481,8 +2536,10 @@ async def secrets_set(req: SecretSetRequest):
 
 @app.post("/api/fs/rename")
 async def fs_rename(req: FSRenameRequest):
+    base = _resolve_allowed_root(req.root)
     src = _resolve_safe_path(req.root, req.src)
     dest = _resolve_safe_path(req.root, req.dest)
+    _reject_root_target(base, src, "rename")
     dest.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dest)
     return {"status": "success"}
@@ -2490,7 +2547,9 @@ async def fs_rename(req: FSRenameRequest):
 
 @app.delete("/api/fs/delete")
 async def fs_delete(root: str, path: str):
+    base = _resolve_allowed_root(root)
     target = _resolve_safe_path(root, path)
+    _reject_root_target(base, target, "delete")
     if target.is_dir():
         for p in sorted(target.rglob("*"), reverse=True):
             if p.is_file():
@@ -2533,7 +2592,7 @@ class GitPullPushRequest(BaseModel):
 
 
 def _run_git(repo_path: str, args: list[str]) -> dict:
-    repo = Path(repo_path).resolve()
+    repo = _resolve_allowed_root(repo_path)
     if not repo.exists():
         raise HTTPException(status_code=404, detail="Repository path not found")
     try:
@@ -2551,7 +2610,7 @@ async def git_init(req: GitRepo):
 
 @app.get("/api/git/status")
 async def git_status(repo_path: str):
-    repo = Path(repo_path).resolve()
+    repo = _resolve_allowed_root(repo_path)
     if not repo.exists():
         # Graceful response instead of 404 when repo path doesn't exist
         return {"exit_code": 1, "stdout": "", "stderr": "Repository path not found"}
@@ -2602,8 +2661,30 @@ async def git_push(req: GitPullPushRequest):
 terminal_processes: Dict[str, subprocess.Popen] = {}
 
 
+def _terminate_process(proc: subprocess.Popen) -> None:
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+    except Exception:
+        pass
+
+
 @app.websocket("/api/term/{term_id}")
 async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
+    try:
+        safe_cwd = _resolve_allowed_root(cwd)
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=str(exc.detail))
+        return
+    if not safe_cwd.exists() or not safe_cwd.is_dir():
+        await websocket.close(code=1008, reason="Terminal cwd does not exist")
+        return
+
     await websocket.accept()
     proc = terminal_processes.get(term_id)
     if proc is None or proc.poll() is not None:
@@ -2611,7 +2692,7 @@ async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
         try:
             proc = subprocess.Popen(
                 shell_cmd,
-                cwd=str(Path(cwd).resolve()),
+                cwd=str(safe_cwd),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -2638,11 +2719,7 @@ async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
                 except Exception:
                     break
         finally:
-            try:
-                if proc.poll() is None:
-                    proc.terminate()
-            except Exception:
-                pass
+            _terminate_process(proc)
 
     task = asyncio.create_task(stream_output())
     try:
@@ -2658,11 +2735,7 @@ async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
                 proc.stdin.flush()
     finally:
         task.cancel()
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-        except Exception:
-            pass
+        _terminate_process(proc)
         terminal_processes.pop(term_id, None)
 
 

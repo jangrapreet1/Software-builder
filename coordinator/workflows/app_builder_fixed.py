@@ -335,9 +335,10 @@ class AppBuilderWorkflowFixed:
                 state["frontend_code"],
                 state["technical_specs"]
             )
-            
+
             self._log(state, "success", "Code integration complete")
             state["integrated_code"] = integrated
+            state["project_name"] = integrated.get("project_name") or state["project_name"]
             state["source_path"] = integrated.get(
                 "path",
                 str(Path(self.settings.generated_apps_dir).resolve() / state['project_name'])

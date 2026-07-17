@@ -4,6 +4,7 @@ Generates tests (proposal) and runs tests, returning a single cohesive result.
 """
 from __future__ import annotations
 from typing import Dict, Optional, List
+from pathlib import Path
 from .base_agent import BaseAgent, ExecutionContext, ExecutionResult, AgentStatus, AgentCapability
 from .comprehensive_test_generator import ComprehensiveTestGenerator
 from .tester_agent import TesterAgent
@@ -43,7 +44,7 @@ class QualityAgent(BaseAgent):
         gen_result = await self._generator.execute_safe(gen_ctx)
         context.add_telemetry("quality_agent.generated_tests", {"files": len(gen_result.output.get("tests", {}))})
 
-        # Step 2: Run tests (with auto-generate-missing enabled by TesterAgent)
+        # Step 2: Run unit and integration tests (with auto-generate-missing enabled by TesterAgent)
         test_report = await self._tester.run_tests(
             app_path=project_path,
             test_type="all",
@@ -51,13 +52,26 @@ class QualityAgent(BaseAgent):
         )
         context.add_telemetry("quality_agent.ran_tests", {"summary": test_report.get("summary", {})})
 
+        # Step 3: Run Playwright E2E tests if a frontend framework is requested
+        e2e_report = None
+        has_frontend = (Path(project_path) / "frontend").exists() or (Path(project_path) / "package.json").exists()
+        if has_frontend:
+            e2e_report = await self._tester.run_tests(
+                app_path=project_path,
+                test_type="e2e",
+                generate_missing=True,
+            )
+            context.add_telemetry("quality_agent.ran_e2e_tests", {"summary": e2e_report.get("summary", {})})
+
         output = {
             "proposed_tests": gen_result.output,
             "test_report": test_report,
+            "e2e_report": e2e_report
         }
 
+        # Overall validation status depends on both reports
         status = AgentStatus.COMPLETED
-        if test_report.get("status") == "error":
+        if test_report.get("status") == "error" or (e2e_report and e2e_report.get("status") == "error"):
             status = AgentStatus.FAILED
 
         return ExecutionResult(
@@ -66,5 +80,6 @@ class QualityAgent(BaseAgent):
             metadata={
                 "proposed_test_files": len(gen_result.output.get("tests", {})),
                 "entities": len(entities),
+                "has_e2e_tests": e2e_report is not None
             }
         )

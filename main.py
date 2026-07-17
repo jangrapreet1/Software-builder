@@ -3,19 +3,25 @@ Main entry point for the Autonomous App-Building Platform Coordinator
 """
 import os
 import asyncio
+import io
+import zipfile
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from rich.console import Console
 from pathlib import Path
 import json
+import re
 from datetime import datetime
 
 from workflows.app_builder import AppBuilderWorkflow
 from config.settings import Settings
 from coordinator.services.permission_manager import PermissionManager
+from coordinator.services.session_manager import SessionManager
+from coordinator.services.repository_detector import RepositoryDetector
+from services.path_policy import PathPolicyError, allowed_roots, ensure_allowed_root, resolve_safe_path
 try:
     from services.framework_registry import get_framework_registry, FrameworkType
 except ModuleNotFoundError:
@@ -54,9 +60,13 @@ app.add_middleware(
 
 # Load settings
 settings = Settings()
+REPO_ROOT = Path(__file__).resolve().parent
+GENERATED_DIR = Path(settings.generated_apps_dir).resolve()
+LOCAL_CONTROL_ALLOWED_ROOTS = allowed_roots([REPO_ROOT, GENERATED_DIR])
 
 # Initialize permission manager (used by UI stats panel)
 permission_manager = PermissionManager(default_expiry=3600)
+session_manager = SessionManager(default_session_duration=3600)
 
 # Optionally use a lightweight fake workflow for testing to avoid external calls
 USE_FAKE_WORKFLOW = os.getenv("USE_FAKE_WORKFLOW", "").lower() in ("1", "true", "yes")
@@ -677,16 +687,46 @@ class FSRenameRequest(BaseModel):
 
 
 def _resolve_safe_path(root: str, rel_path: str) -> Path:
-    base = Path(root).resolve()
-    target = (base / rel_path).resolve()
-    if not str(target).startswith(str(base)):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    return target
+    try:
+        _, target = resolve_safe_path(root, rel_path, LOCAL_CONTROL_ALLOWED_ROOTS)
+        return target
+    except PathPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _resolve_allowed_root(root: str) -> Path:
+    try:
+        return ensure_allowed_root(root, LOCAL_CONTROL_ALLOWED_ROOTS)
+    except PathPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _reject_root_target(base: Path, target: Path, operation: str) -> None:
+    if target == base:
+        raise HTTPException(status_code=400, detail=f"Cannot {operation} the root directory")
+
+
+def _secret_metadata(value: str) -> dict:
+    return {"set": True, "length": len(value)}
+
+
+def _validate_secret_key(key: str) -> str:
+    cleaned = key.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cleaned):
+        raise HTTPException(status_code=400, detail="Secret key must be a valid environment variable name")
+    return cleaned
+
+
+def _validate_secret_filename(filename: str) -> str:
+    cleaned = filename.strip() or ".env"
+    if Path(cleaned).name != cleaned or not cleaned.startswith(".env"):
+        raise HTTPException(status_code=400, detail="Secrets can only be stored in .env files")
+    return cleaned
 
 
 @app.get("/api/fs/list")
 async def fs_list(root: str, path: str = "."):
-    base = Path(root).resolve()
+    base = _resolve_allowed_root(root)
     target = _resolve_safe_path(root, path)
     if not base.exists() or not target.exists():
         return {"root": str(base), "path": str(Path(path)), "items": []}
@@ -742,8 +782,10 @@ async def fs_mkdir(req: FSMkdirRequest):
 
 @app.post("/api/fs/rename")
 async def fs_rename(req: FSRenameRequest):
+    base = _resolve_allowed_root(req.root)
     src = _resolve_safe_path(req.root, req.src)
     dest = _resolve_safe_path(req.root, req.dest)
+    _reject_root_target(base, src, "rename")
     dest.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dest)
     return {"status": "success"}
@@ -751,7 +793,9 @@ async def fs_rename(req: FSRenameRequest):
 
 @app.delete("/api/fs/delete")
 async def fs_delete(root: str, path: str):
+    base = _resolve_allowed_root(root)
     target = _resolve_safe_path(root, path)
+    _reject_root_target(base, target, "delete")
     if target.is_dir():
         for p in sorted(target.rglob("*"), reverse=True):
             if p.is_file():
@@ -777,8 +821,8 @@ class SecretSetRequest(BaseModel):
 
 @app.get("/api/secrets/list")
 async def secrets_list(root: str, filename: str = ".env"):
-    base = Path(root).resolve()
-    env_file = _resolve_safe_path(root, filename)
+    base = _resolve_allowed_root(root)
+    env_file = _resolve_safe_path(root, _validate_secret_filename(filename))
     secrets: dict = {}
     if env_file.exists() and env_file.is_file():
         for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -786,23 +830,29 @@ async def secrets_list(root: str, filename: str = ".env"):
                 continue
             if "=" in line:
                 k, v = line.split("=", 1)
-                secrets[k.strip()] = v.strip()
+                secrets[k.strip()] = _secret_metadata(v.strip())
     return {"path": str(env_file.relative_to(base)), "secrets": secrets}
 
 
 @app.post("/api/secrets/set")
 async def secrets_set(req: SecretSetRequest):
-    env_file = _resolve_safe_path(req.root, req.filename)
-    existing: dict = {}
+    key = _validate_secret_key(req.key)
+    env_file = _resolve_safe_path(req.root, _validate_secret_filename(req.filename))
+    lines: list[str] = []
+    replaced = False
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
-            if not line or line.strip().startswith("#"):
+            if not line.strip() or line.strip().startswith("#") or "=" not in line:
+                lines.append(line)
                 continue
-            if "=" in line:
-                k, v = line.split("=", 1)
-                existing[k.strip()] = v.strip()
-    existing[req.key] = req.value
-    lines = [f"{k}={v}" for k, v in existing.items()]
+            existing_key, _ = line.split("=", 1)
+            if existing_key.strip() == key:
+                lines.append(f"{key}={req.value}")
+                replaced = True
+            else:
+                lines.append(line)
+    if not replaced:
+        lines.append(f"{key}={req.value}")
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"status": "success"}
@@ -816,7 +866,7 @@ import subprocess
 
 
 def _run_git(repo_path: str, args: list) -> dict:
-    repo = Path(repo_path).resolve()
+    repo = _resolve_allowed_root(repo_path)
     if not repo.exists():
         return {"exit_code": 1, "stdout": "", "stderr": "Repository path not found"}
     try:
@@ -828,7 +878,7 @@ def _run_git(repo_path: str, args: list) -> dict:
 
 @app.get("/api/git/status")
 async def git_status(repo_path: str):
-    repo = Path(repo_path).resolve()
+    repo = _resolve_allowed_root(repo_path)
     if not repo.exists():
         return {"exit_code": 1, "stdout": "", "stderr": "Repository path not found"}
     res = _run_git(repo_path, ["status", "--porcelain", "-b"])
@@ -850,20 +900,23 @@ async def repo_detect(req: RepoDetectRequest):
     # Accept any of these fields
     target_path = req.path or req.root or req.repo_path
     if not target_path:
-        return {"detected": False, "error": "No path provided"}
-    target = Path(target_path).resolve()
-    if not target.exists():
-        return {"detected": False, "error": "Path not found"}
-    # Check for common indicators
-    has_git = (target / ".git").exists()
-    has_package_json = (target / "package.json").exists()
-    has_requirements = (target / "requirements.txt").exists()
+        raise HTTPException(status_code=400, detail="No path provided")
+    candidate = Path(target_path).expanduser()
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    target = _resolve_allowed_root(target_path)
+
+    detector = RepositoryDetector(str(target))
+    report = detector.detect_all()
     return {
+        "status": "success",
+        "detection_report": report,
+        # Compatibility fields for older callers.
         "detected": True,
         "path": str(target),
-        "has_git": has_git,
-        "has_package_json": has_package_json,
-        "has_requirements": has_requirements
+        "has_git": (target / ".git").exists(),
+        "has_package_json": (target / "package.json").exists(),
+        "has_requirements": (target / "requirements.txt").exists(),
     }
 
 
@@ -942,22 +995,102 @@ async def set_session_permissions(req: SessionPermissionsRequest):
 
 
 # ============================================
+# PREVIEW / SANDBOX COMPATIBILITY ENDPOINTS
+# ============================================
+
+class PreviewRequest(BaseModel):
+    app_path: str
+    port: int = 3000
+    session_duration: int = 3600
+
+
+@app.post("/api/app/preview")
+async def preview_app(req: PreviewRequest):
+    candidate = Path(req.app_path).expanduser()
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail=f"Application path not found: {req.app_path}")
+    app_path = _resolve_allowed_root(req.app_path)
+
+    preview_url = f"http://localhost:{req.port}"
+    session = session_manager.create_session(
+        instance_id=f"preview-{app_path.name}",
+        preview_url=preview_url,
+        duration=req.session_duration,
+        metadata={"app_path": str(app_path)},
+    )
+
+    return {
+        "status": "success",
+        "preview_url": preview_url,
+        "raw_preview_url": preview_url,
+        "secure_preview_url": session["preview_url"],
+        "session_token": session["session_token"],
+        "expires_at": session["expires_at"],
+    }
+
+
+@app.get("/api/sandbox/health")
+async def sandbox_health():
+    return {"status": "unavailable", "message": "Sandbox orchestrator not initialized"}
+
+
+@app.get("/api/sandbox/instances")
+async def list_sandbox_instances():
+    return {"instances": [], "count": 0, "status": "unavailable"}
+
+
+@app.get("/api/sessions/stats")
+@app.get("/api/session/stats")
+async def session_stats():
+    stats = session_manager.get_stats()
+    return {
+        "total_sessions": stats.get("total_sessions", len(session_manager.sessions)),
+        "active_sessions": stats.get("active_sessions", 0),
+        **stats,
+    }
+
+
+@app.get("/api/app/download")
+async def download_app(app_path: str):
+    candidate = Path(app_path).expanduser()
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Application path not found")
+    source = _resolve_allowed_root(app_path)
+    if not source.is_dir():
+        raise HTTPException(status_code=404, detail="Application path not found")
+
+    try:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for file_path in source.rglob("*"):
+                if file_path.is_file():
+                    archive.write(file_path, file_path.relative_to(source))
+        buffer.seek(0)
+
+        filename = f"{source.name}.zip"
+        return StreamingResponse(
+            buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================
 # APP LAUNCH ENDPOINT (placeholder)
 # ============================================
 
 class AppLaunchRequest(BaseModel):
     project_path: str = ""
     project_name: str = ""
+    app_path: str = ""
+    port: int = 3000
 
 
 @app.post("/api/app/launch")
 async def app_launch(req: AppLaunchRequest):
-    # Placeholder - app launch not implemented yet
-    return {
-        "status": "success",
-        "message": "App launch placeholder",
-        "project_path": req.project_path
-    }
+    raise HTTPException(status_code=503, detail="Sandbox orchestrator not available")
 
 
 # ============================================
@@ -969,8 +1102,30 @@ import asyncio
 terminal_processes: dict = {}
 
 
+def _terminate_process(proc: subprocess.Popen) -> None:
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+    except Exception:
+        pass
+
+
 @app.websocket("/api/term/{term_id}")
 async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
+    try:
+        safe_cwd = _resolve_allowed_root(cwd)
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=str(exc.detail))
+        return
+    if not safe_cwd.exists() or not safe_cwd.is_dir():
+        await websocket.close(code=1008, reason="Terminal cwd does not exist")
+        return
+
     await websocket.accept()
     proc = terminal_processes.get(term_id)
     if proc is None or proc.poll() is not None:
@@ -978,7 +1133,7 @@ async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
         try:
             proc = subprocess.Popen(
                 shell_cmd,
-                cwd=str(Path(cwd).resolve()),
+                cwd=str(safe_cwd),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -1005,11 +1160,7 @@ async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
                 except Exception:
                     break
         finally:
-            try:
-                if proc.poll() is None:
-                    proc.terminate()
-            except Exception:
-                pass
+            _terminate_process(proc)
 
     task = asyncio.create_task(stream_output())
     try:
@@ -1025,11 +1176,7 @@ async def terminal_ws(websocket: WebSocket, term_id: str, cwd: str):
                 proc.stdin.flush()
     finally:
         task.cancel()
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-        except Exception:
-            pass
+        _terminate_process(proc)
         terminal_processes.pop(term_id, None)
 
 

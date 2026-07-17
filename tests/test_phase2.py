@@ -4,6 +4,8 @@ Tests Problem Resolver, Tester Agent, Collaboration Manager, and Live Preview
 """
 import pytest
 import asyncio
+import json
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import shutil
@@ -417,6 +419,66 @@ async def test_problem_resolver_performance(llm_mock, settings, sample_app_path)
     
     # Should complete in under 60 seconds for small app
     assert duration < 60
+
+
+@pytest.mark.asyncio
+async def test_tester_agent_playwright_generation(llm_mock, settings, tmp_path):
+    from agents.tester_agent import TesterAgent
+    
+    agent = TesterAgent(llm_mock, settings)
+    
+    # Create package.json to mimic frontend
+    pkg_json = tmp_path / "package.json"
+    pkg_json.write_text(json.dumps({
+        "name": "test-playwright",
+        "dependencies": {
+            "playwright": "^1.40.0"
+        }
+    }))
+    
+    test_info = await agent._detect_test_framework(tmp_path)
+    assert test_info["framework"] == "playwright"
+    
+    res = await agent._generate_tests(tmp_path, test_info)
+    assert res["success"] is True
+    assert any("app.spec.ts" in f for f in res["files_created"])
+
+@pytest.mark.asyncio
+async def test_quality_agent_playwright_e2e(llm_mock, settings, tmp_path):
+    from agents.quality_agent import QualityAgent
+    from agents.base_agent import ExecutionContext
+    
+    # Setup mock package.json
+    pkg_json = tmp_path / "package.json"
+    pkg_json.write_text(json.dumps({"name": "test-qa-playwright"}))
+    
+    agent = QualityAgent(llm_mock, settings)
+    
+    # Patch test runner to avoid real docker calls during test runs
+    with patch.object(agent._tester, "run_tests") as mock_run:
+        mock_run.return_value = {
+            "status": "passed",
+            "tests_run": 2,
+            "tests_passed": 2,
+            "tests_failed": 0,
+            "tests_skipped": 0,
+            "failures": [],
+            "output": "mock output",
+            "error_output": ""
+        }
+        
+        ctx = ExecutionContext(
+            build_id="test-build",
+            request_data={
+                "project_path": str(tmp_path),
+                "entities": [],
+            }
+        )
+        
+        result = await agent.execute(ctx)
+        assert result.status.value == "completed"
+        assert result.metadata["has_e2e_tests"] is True
+        assert "e2e_report" in result.output
 
 
 if __name__ == "__main__":

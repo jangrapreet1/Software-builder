@@ -32,6 +32,9 @@ class FrontendAgent:
         """
         Generate complete frontend code based on tasks and specifications
         """
+        if (specs.get("preferred_frontend") or "").lower().strip() == "nextjs":
+            return await self._generate_nextjs(tasks, user_flows, specs, backend_code)
+
         # Extract API endpoints from backend
         api_endpoints = self._extract_api_endpoints(backend_code)
         
@@ -305,3 +308,99 @@ Use TypeScript best practices with strict typing."""
                 return "\n".join(lines).strip()
         
         return response.strip()
+
+    async def _generate_nextjs(
+        self,
+        tasks: list[dict],
+        user_flows: list[dict],
+        specs: dict,
+        backend_code: dict
+    ) -> dict:
+        """Generate a complete Next.js frontend application"""
+        system_prompt = """You are an expert Next.js developer. Generate a complete, production-ready React frontend application using Next.js App Router.
+You must output a JSON object mapping relative file paths to their complete file contents.
+Do not wrap the JSON in markdown code blocks or add any other text outside the JSON. The JSON keys must be relative file paths, and values must be file contents.
+
+Generate the following files:
+1. package.json (with next, react, react-dom, tailwindcss, postcss, autoprefixer, lucide-react dependencies)
+2. next.config.js (Next.js configurations, redirects or rewrites if any, CORS headers)
+3. tailwind.config.js and postcss.config.js (standard Tailwind configuration)
+4. tsconfig.json (standard TS config for Next.js)
+5. src/app/layout.tsx (App router root layout, styling imports, provider mounts)
+6. src/app/page.tsx (App router homepage, index page displaying hero sections or project lists)
+7. src/app/login/page.tsx (standard login page with sign-in flow)
+8. src/app/dashboard/page.tsx (dashboard panel page showing CRUD interface controls)
+9. Dockerfile (Node 18 alpine exposing port 3000 and starting 'npm run dev' or running 'npm run build' and starting Node)
+10. .dockerignore (ignoring node_modules, etc.)
+"""
+        messages = [
+            SystemMessage(content=system_prompt + f"\nUser Flows:\n{json.dumps(user_flows, indent=2)}\n\nTasks:\n{json.dumps(tasks, indent=2)}"),
+            HumanMessage(content="Generate the complete file map JSON for the Next.js application.")
+        ]
+        try:
+            response = await call_llm_with_retry(self.llm, messages)
+            clean_content = response.content.strip()
+            if clean_content.startswith("```json"):
+                clean_content = clean_content[7:]
+            if clean_content.endswith("```"):
+                clean_content = clean_content[:-3]
+            clean_content = clean_content.strip()
+            
+            files = json.loads(clean_content)
+            return {"files": files}
+        except Exception:
+            return {"files": self._get_nextjs_fallback_files()}
+
+    def _get_nextjs_fallback_files(self) -> dict:
+        """Provide fallback files for Next.js frontend"""
+        pkg_json = """{
+  "name": "nextjs-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}"""
+        layout_tsx = """import './globals.css';
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <div class="min-h-screen bg-gray-50">{children}</div>
+      </body>
+    </html>
+  );
+}"""
+        page_tsx = """export default function Home() {
+  return (
+    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
+      <h1>Auto-Generated App (Next.js)</h1>
+      <p>Welcome to your new Next.js application.</p>
+    </div>
+  );
+}"""
+        globals_css = """@tailwind base;
+@tailwind components;
+@tailwind utilities;"""
+        dockerfile = """FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
+"""
+        return {
+            "package.json": pkg_json,
+            "src/app/layout.tsx": layout_tsx,
+            "src/app/page.tsx": page_tsx,
+            "src/app/globals.css": globals_css,
+            "Dockerfile": dockerfile
+        }

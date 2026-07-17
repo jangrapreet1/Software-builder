@@ -175,10 +175,7 @@ const EnhancedDiffBlock: React.FC<EnhancedDiffBlockProps> = ({ text, filePath, o
   );
 };
 
-// Keep old DiffBlock for backwards compatibility 
-const DiffBlock: React.FC<{ text: string }> = ({ text }) => {
-  return <EnhancedDiffBlock text={text} />;
-};
+// DiffBlock removed - use EnhancedDiffBlock instead
 
 // Command Block for terminal/bash code with Run button
 interface CommandBlockProps {
@@ -388,7 +385,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
   const [toast, setToast] = useState<string>('');
 
   // Slash command autocomplete state
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [_showCommandPalette, setShowCommandPalette] = useState(false);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const filteredCommands = input.startsWith('/')
     ? SLASH_COMMANDS.filter(c => c.cmd.toLowerCase().startsWith(input.toLowerCase().split(' ')[0]))

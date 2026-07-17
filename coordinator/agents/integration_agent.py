@@ -4,6 +4,7 @@ Integration Agent - Combines frontend and backend, manages deployment
 import os
 import json
 import asyncio
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,13 @@ class IntegrationAgent:
         Integrate backend and frontend code into a unified project structure
         """
         # Create project directory
-        project_path = self.generated_dir / project_name
+        safe_project_name = self._safe_project_name(project_name)
+        project_path = (self.generated_dir / safe_project_name).resolve()
+        try:
+            project_path.relative_to(self.generated_dir.resolve())
+        except ValueError as exc:
+            raise ValueError("Project path escapes generated apps directory") from exc
+
         if project_path.exists():
             shutil.rmtree(project_path)
         project_path.mkdir(parents=True)
@@ -63,8 +70,15 @@ class IntegrationAgent:
                 "frontend": frontend_code
             },
             "docker": docker_config,
+            "project_name": safe_project_name,
             "path": str(project_path)
         }
+
+    def _safe_project_name(self, project_name: str) -> str:
+        """Normalize user-provided project names to a single directory name."""
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (project_name or "").strip())
+        cleaned = cleaned.strip(".-_")
+        return cleaned[:80] or "generated-app"
     
     async def _create_backend_structure(self, base_path: Path, code: dict):
         """Create backend directory structure and files"""

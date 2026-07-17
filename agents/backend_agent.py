@@ -32,6 +32,9 @@ class BackendAgent:
         """
         Generate complete backend code based on tasks and specifications
         """
+        if (specs.get("preferred_backend") or "").lower().strip() == "express":
+            return await self._generate_express(tasks, entities, specs)
+
         # Generate code for each component
         code = {
             "main": await self._generate_main_file(specs),
@@ -353,3 +356,88 @@ def downgrade():
     # Drop tables
     pass
 '''
+
+    async def _generate_express(self, tasks: list[dict], entities: list[dict], specs: dict) -> dict:
+        """Generate a complete Node.js/Express backend application"""
+        system_prompt = """You are an expert Node.js and Express developer. Generate a complete, production-ready REST API application.
+You must output a JSON object mapping relative file paths to their complete file contents.
+Do not wrap the JSON in markdown code blocks or add any other text outside the JSON. The JSON keys must be relative file paths, and values must be file contents.
+
+Generate the following files:
+1. package.json (with express, cors, dotenv, pg, bcryptjs, jsonwebtoken dependencies)
+2. server.js (main entry point, initializes CORS, dotenv, database connection, imports and mounts routers, includes health check)
+3. db.js (PostgreSQL pool connection using the 'pg' library)
+4. middleware/auth.js (JWT authentication middleware checking the Authorization header)
+5. routes/auth.js (endpoints for signup and login with token generation)
+6. routes/items.js (generic endpoints for all entities provided: GET, GET by ID, POST, PUT, DELETE, including authentication checks)
+7. Dockerfile (Node 18 alpine exposing port 8000 and starting 'node server.js')
+8. .dockerignore (ignoring node_modules, etc.)
+"""
+        messages = [
+            SystemMessage(content=system_prompt + f"\nEntities:\n{json.dumps(entities, indent=2)}\n\nTasks:\n{json.dumps(tasks, indent=2)}"),
+            HumanMessage(content="Generate the complete file map JSON for the Express application.")
+        ]
+        try:
+            response = await call_llm_with_retry(self.llm, messages)
+            clean_content = response.content.strip()
+            if clean_content.startswith("```json"):
+                clean_content = clean_content[7:]
+            if clean_content.endswith("```"):
+                clean_content = clean_content[:-3]
+            clean_content = clean_content.strip()
+            
+            files = json.loads(clean_content)
+            return {"files": files}
+        except Exception:
+            return {"files": self._get_express_fallback_files(entities)}
+
+    def _get_express_fallback_files(self, entities: list[dict]) -> dict:
+        """Provide fallback files for Node.js/Express backend"""
+        pkg_json = """{
+  "name": "express-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.5"
+  }
+}"""
+        server_js = """const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.get('/health', (req, res) => res.json({ status: 'healthy' }));
+
+const port = process.env.PORT || 8000;
+app.listen(port, () => console.log(`Server running on port ${port}`));
+"""
+        db_js = """const { Pool } = require('pg');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+  pool
+};"""
+        dockerfile = """FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 8000
+CMD ["node", "server.js"]
+"""
+        return {
+            "package.json": pkg_json,
+            "server.js": server_js,
+            "db.js": db_js,
+            "Dockerfile": dockerfile
+        }

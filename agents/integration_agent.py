@@ -73,6 +73,13 @@ class IntegrationAgent:
         """Create backend directory structure and files"""
         base_path.mkdir(parents=True, exist_ok=True)
         
+        if "files" in code and isinstance(code["files"], dict):
+            for rel_path, content in code["files"].items():
+                dest_path = base_path / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_file(dest_path, content)
+            return
+            
         # Main application files
         self._write_file(base_path / "main.py", code.get("main", ""))
         self._write_file(base_path / "models.py", code.get("models", ""))
@@ -128,6 +135,13 @@ venv/
         """Create frontend directory structure and files"""
         base_path.mkdir(parents=True, exist_ok=True)
         
+        if "files" in code and isinstance(code["files"], dict):
+            for rel_path, content in code["files"].items():
+                dest_path = base_path / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_file(dest_path, content)
+            return
+            
         # Root files
         self._write_file(base_path / "index.html", code.get("index_html", ""))
         self._write_file(base_path / "package.json", code.get("package_json", ""))
@@ -229,6 +243,9 @@ npm-debug.log
     
     async def _create_docker_config(self, project_path: Path, project_name: str, specs: dict) -> dict:
         """Create Docker Compose configuration"""
+        fe_fw = (specs.get("preferred_frontend") or "").lower().strip()
+        frontend_port = "3000:3000" if fe_fw == "nextjs" else "3000:80"
+        
         docker_compose_content = f"""version: '3.8'
 
 services:
@@ -271,7 +288,7 @@ services:
       dockerfile: Dockerfile
     container_name: {project_name}-frontend
     ports:
-      - "3000:80"
+      - "{frontend_port}"
     depends_on:
       - backend
 

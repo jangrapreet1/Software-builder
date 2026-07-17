@@ -2,6 +2,7 @@
 Enhanced Error Handling Middleware
 Provides comprehensive error tracking, logging, and recovery mechanisms
 """
+import json
 import traceback
 from typing import Callable, Optional
 from datetime import datetime
@@ -118,20 +119,6 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             
             # Process request
             response = await call_next(request)
-            
-            # If the downstream produced an error response (e.g., HTTPException handled by FastAPI),
-            # convert it into our structured error format
-            if response.status_code >= 400:
-                class _HTTPStatusError(Exception):
-                    def __init__(self, status_code: int, message: str = ""):
-                        super().__init__(message or f"HTTP {status_code}")
-                        self.status_code = status_code
-
-                return await self._handle_error(
-                    request,
-                    _HTTPStatusError(response.status_code),
-                    request_id,
-                )
 
             # Track response
             if self.metrics_enabled:
@@ -143,12 +130,79 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                         "status_code": str(response.status_code)
                     }
                 )
+                if response.status_code >= 400:
+                    self.metrics_collector.increment_counter(
+                        "http.errors.total",
+                        labels={
+                            "category": self._categorize_status_code(response.status_code),
+                            "status_code": str(response.status_code),
+                            "endpoint": request.url.path
+                        }
+                    )
+
+            if response.status_code >= 400:
+                return await self._handle_response_error(request, response, request_id)
             
             return response
             
         except Exception as exc:
             # Handle error
             return await self._handle_error(request, exc, request_id)
+
+    async def _handle_response_error(
+        self,
+        request: Request,
+        response: Response,
+        request_id: str,
+    ) -> JSONResponse:
+        """Wrap handled HTTP error responses while preserving original detail."""
+        body = b""
+        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+            body += chunk
+
+        original_payload = None
+        if body:
+            try:
+                original_payload = json.loads(body.decode("utf-8"))
+            except Exception:
+                original_payload = body.decode("utf-8", errors="replace")
+
+        message = f"HTTP {response.status_code}"
+        if isinstance(original_payload, dict):
+            detail = original_payload.get("detail")
+            if detail:
+                message = str(detail)
+        elif original_payload:
+            message = str(original_payload)
+
+        category = self._categorize_status_code(response.status_code)
+        error_response = {
+            "error": {
+                "category": category,
+                "message": self._sanitize_error_message(message, category),
+                "request_id": request_id,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "original_detail": original_payload,
+            }
+        }
+
+        return JSONResponse(status_code=response.status_code, content=error_response)
+
+    def _categorize_status_code(self, status_code: int) -> str:
+        """Categorize handled HTTP error responses without replacing their body."""
+        if status_code == status.HTTP_401_UNAUTHORIZED:
+            return ErrorCategory.AUTHENTICATION
+        if status_code == status.HTTP_403_FORBIDDEN:
+            return ErrorCategory.AUTHORIZATION
+        if status_code == status.HTTP_404_NOT_FOUND:
+            return ErrorCategory.NOT_FOUND
+        if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            return ErrorCategory.RATE_LIMIT
+        if 400 <= status_code < 500:
+            return ErrorCategory.VALIDATION
+        if 500 <= status_code < 600:
+            return ErrorCategory.INTERNAL
+        return ErrorCategory.UNKNOWN
     
     async def _handle_error(
         self,

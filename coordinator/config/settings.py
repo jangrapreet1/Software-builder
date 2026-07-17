@@ -2,7 +2,6 @@
 Configuration settings for the coordinator
 """
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -23,6 +22,12 @@ class Settings(BaseSettings):
     coordinator_port: int = 5000
     backend_port: int = 8000
     frontend_port: int = 3000
+    cors_allow_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
+    ]
     
     # Generated Apps Directory
     generated_apps_dir: str = Field(
@@ -37,6 +42,23 @@ class Settings(BaseSettings):
     docker_network: str = "appbuilder-network"
     sandbox_read_only_rootfs: bool = True
     sandbox_default_deny_egress: bool = True
+    preview_allowed_hosts: list[str] = [
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+    ]
+
+    # Rate limiting (SlowAPI)
+    rate_limit_build: str = "10/minute"
+    rate_limit_read: str = "60/minute"
+    rate_limit_write: str = "10/minute"
+    rate_limit_detect: str = "10/minute"
+    rate_limit_problem_resolver: str = "10/minute"
+    rate_limit_preview: str = "20/minute"
+    rate_limit_chat_message: str = "60/minute"
+    rate_limit_chat_patch: str = "30/minute"
+    rate_limit_chat_attachment: str = "20/minute"
 
     # Object Storage (S3/MinIO)
     object_store_endpoint: str = "http://localhost:9000"

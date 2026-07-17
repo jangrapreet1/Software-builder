@@ -36,6 +36,14 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+deploy/.env.production
+deploy/*SECRETS*.md
+deploy/*secrets*.md
+*.pem
+*.key
+*.p12
 
 # Generated application code
 # Should not be committed to the repository

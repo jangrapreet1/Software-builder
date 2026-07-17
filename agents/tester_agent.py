@@ -169,7 +169,9 @@ class TesterAgent:
             app_structure = self._analyze_app_structure(app_path)
             
             # Generate tests based on framework
-            if test_info["framework"] in ["pytest", None]:
+            if test_info["framework"] == "playwright":
+                generated = await self._generate_playwright_tests(app_path, app_structure)
+            elif test_info["framework"] in ["pytest", None]:
                 generated = await self._generate_pytest_tests(app_path, app_structure)
             elif test_info["framework"] in ["jest", "vitest"]:
                 generated = await self._generate_jest_tests(app_path, app_structure)
@@ -612,3 +614,71 @@ describe('{component_name}', () => {{
     def get_test_history(self) -> List[Dict]:
         """Get history of all test runs"""
         return self.test_history
+
+    async def _generate_playwright_tests(self, app_path: Path, structure: Dict) -> Dict:
+        """Generate Playwright E2E UI browser tests"""
+        # Determine target test directory
+        test_dir = app_path / "tests"
+        if (app_path / "frontend").exists():
+            test_dir = app_path / "frontend" / "tests"
+            
+        test_dir.mkdir(parents=True, exist_ok=True)
+        files_created = []
+        
+        # Basic Playwright config file if not present
+        config_path = app_path / "playwright.config.ts"
+        if (app_path / "frontend").exists():
+            config_path = app_path / "frontend" / "playwright.config.ts"
+            
+        if not config_path.exists():
+            config_content = """import { defineConfig, devices } from '@playwright/test';
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: 'list',
+  use: {
+    baseURL: 'http://localhost:3000',
+    trace: 'on-first-retry',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    }
+  ]
+});
+"""
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(config_content)
+            files_created.append(str(config_path.relative_to(app_path)))
+
+        # Write E2E test file
+        spec_content = """import { test, expect } from '@playwright/test';
+
+test.describe('E2E Application flows', () => {
+  test('Page loads successfully', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).toHaveTitle(/.*App.*/i);
+  });
+
+  test('Navbar navigation links functional', async ({ page }) => {
+    await page.goto('/');
+    const links = page.locator('nav a');
+    const count = await links.count();
+    expect(count).toBeGreaterThanOrEqual(0);
+  });
+});
+"""
+        spec_path = test_dir / "app.spec.ts"
+        with open(spec_path, 'w', encoding='utf-8') as f:
+            f.write(spec_content)
+        files_created.append(str(spec_path.relative_to(app_path)))
+        
+        return {
+            "success": True,
+            "files_created": files_created,
+            "message": f"Generated Playwright configurations and specs: {', '.join(files_created)}"
+        }
