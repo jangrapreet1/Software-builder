@@ -155,6 +155,7 @@ cors_origins.extend([
     "http://127.0.0.1",
 ])
 cors_origins = list(set([o for o in cors_origins if o != "*"]))
+console.print(f"[cyan]DEBUG: CORS origins = {cors_origins}[/cyan]")
 
 app.add_middleware(
     CORSMiddleware,
