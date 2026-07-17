@@ -12,7 +12,7 @@ from datetime import datetime
 import subprocess
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from services.retry_utils import call_llm_with_retry
 
 

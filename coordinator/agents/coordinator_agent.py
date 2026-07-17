@@ -4,7 +4,7 @@ Coordinator Agent - Analyzes briefs and orchestrates the build process
 import json
 from typing import Any
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.settings import Settings
 

@@ -7,7 +7,7 @@ import json
 from typing import Any, List, Dict
 from pathlib import Path
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.settings import Settings
 

@@ -5,7 +5,7 @@ import ast
 import json
 from typing import Any, Dict, List
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.settings import Settings
 from .templates.backend_templates import BackendTemplates

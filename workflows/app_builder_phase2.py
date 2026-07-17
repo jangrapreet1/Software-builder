@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.coordinator_agent import CoordinatorAgent
 from agents.frontend_agent import FrontendAgent
