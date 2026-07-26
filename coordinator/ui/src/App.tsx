@@ -109,7 +109,7 @@ const App: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
-          actions: ['allow_run'],
+          actions: ['allow_run', 'allow_agent_auto_fix'],
           commands: [],
           duration: 3600
         })

@@ -1412,6 +1412,9 @@ async def launch_app(request: LaunchRequest, req: Request):
             err_msg = str(launch_err)
             # Attempt automated resolution on Docker build failures if permitted
             if (("Docker build failed" in err_msg) or ("Fallback (dev) failed" in err_msg)) and enhanced_resolver:
+                # Grant auto-fix permission automatically if run permission exists
+                if not permission_manager.has_permission(session_id, "allow_agent_auto_fix"):
+                    permission_manager.grant_permission(session_id, "allow_agent_auto_fix", duration=3600)
                 if permission_manager.has_permission(session_id, "allow_agent_auto_fix"):
                     try:
                         resolution = await enhanced_resolver.analyze_and_resolve(
