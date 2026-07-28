@@ -98,20 +98,45 @@ const NotificationCard: React.FC<{
 
   const styles = getStyles();
 
+  const [progress, setProgress] = useState(100);
+
+  useEffect(() => {
+    if (!notification.duration) return;
+    const start = Date.now();
+    const duration = notification.duration;
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, 100 - (elapsed / duration) * 100);
+      setProgress(remaining);
+    };
+    const id = setInterval(tick, 50);
+    return () => clearInterval(id);
+  }, [notification.duration]);
+
+  const accentColor =
+    notification.type === 'success' ? '#10b981' :
+    notification.type === 'error'   ? '#ef4444' :
+    notification.type === 'warning' ? '#f59e0b' :
+    '#3b82f6';
+
   return (
     <div
-      className={`${styles.bg} border ${styles.border} backdrop-blur-md rounded-xl shadow-lg p-4 transition-all duration-300 transform ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
-        }`}
+      className={`relative overflow-hidden ${styles.bg} border ${styles.border} backdrop-blur-xl rounded-xl shadow-2xl transition-all duration-300 transform ${
+        isVisible ? 'translate-x-0 opacity-100 scale-100' : 'translate-x-full opacity-0 scale-95'
+      }`}
+      style={{ borderLeft: `3px solid ${accentColor}` }}
     >
-      <div className="flex items-start">
-        <i className={`fas ${styles.icon} mt-1 mr-3`}></i>
-        <div className="flex-1">
-          <h4 className={`font-semibold ${styles.title} mb-1`}>{notification.title}</h4>
-          <p className={`text-sm ${styles.text}`}>{notification.message}</p>
+      <div className="flex items-start p-4">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${styles.bg} mr-3 shrink-0 mt-0.5`}>
+          <i className={`fas ${styles.icon} text-sm`}></i>
+        </div>
+        <div className="flex-1 min-w-0">
+          <h4 className={`font-semibold text-sm ${styles.title} mb-0.5`}>{notification.title}</h4>
+          <p className={`text-xs ${styles.text} opacity-80 leading-relaxed`}>{notification.message}</p>
           {notification.action && (
             <button
               onClick={notification.action.onClick}
-              className={`mt-2 text-sm font-semibold ${styles.text} hover:text-white hover:underline decoration-white/30`}
+              className={`mt-2 text-xs font-semibold ${styles.text} hover:text-white underline underline-offset-2 decoration-white/30`}
             >
               {notification.action.label} →
             </button>
@@ -119,11 +144,21 @@ const NotificationCard: React.FC<{
         </div>
         <button
           onClick={handleDismiss}
-          className={`ml-3 ${styles.text} hover:opacity-70 transition`}
+          className={`ml-2 mt-0.5 ${styles.text} hover:opacity-70 transition text-xs shrink-0`}
         >
           <i className="fas fa-times"></i>
         </button>
       </div>
+
+      {/* Progress timer bar */}
+      {notification.duration && (
+        <div className="h-0.5 bg-white/5 w-full">
+          <div
+            className="h-full transition-none rounded-full"
+            style={{ width: `${progress}%`, background: accentColor, opacity: 0.4 }}
+          ></div>
+        </div>
+      )}
     </div>
   );
 };

@@ -10,6 +10,7 @@ import { IDEShell } from './components/IDEShell';
 import { PermissionsStatsPanel } from './components/PermissionsStatsPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { apiClient } from './utils/apiClient';
+import BuildWorkflowStepper from './components/BuildWorkflowStepper';
 
 interface InstanceState {
   instanceId?: string;
@@ -26,6 +27,13 @@ interface InstanceState {
 }
 
 type ActivePage = 'live-preview' | 'project-explorer' | 'problem-resolver' | 'editor';
+type DeviceViewport = 'desktop' | 'tablet' | 'mobile';
+
+const DEVICE_WIDTHS: Record<DeviceViewport, string> = {
+  desktop: '100%',
+  tablet: '768px',
+  mobile: '375px',
+};
 
 const App: React.FC = () => {
   const [instance, setInstance] = useState<InstanceState>({
@@ -42,6 +50,10 @@ const App: React.FC = () => {
   const [autoRetryActive, setAutoRetryActive] = useState(false);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [nextRetryAt, setNextRetryAt] = useState<number | null>(null);
+  const [deviceViewport, setDeviceViewport] = useState<DeviceViewport>('desktop');
+  const [apiLatency, setApiLatency] = useState<number | null>(null);
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [projectCount, setProjectCount] = useState<number>(0);
   const RETRY_LIMIT = 2;
   const retryTimeoutRef = useRef<number | null>(null);
 
@@ -49,6 +61,33 @@ const App: React.FC = () => {
   useEffect(() => {
     apiClient.setNotificationHandler(addNotification);
   }, [addNotification]);
+
+  // Backend health ping every 15 seconds
+  useEffect(() => {
+    const ping = async () => {
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/health', { signal: AbortSignal.timeout(5000) });
+        const latency = Math.round(performance.now() - t0);
+        setApiOnline(res.ok);
+        setApiLatency(latency);
+      } catch {
+        setApiOnline(false);
+        setApiLatency(null);
+      }
+    };
+    ping();
+    const id = setInterval(ping, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Fetch project count for Explorer badge
+  useEffect(() => {
+    fetch('/api/builds')
+      .then(r => r.json())
+      .then(d => setProjectCount(Array.isArray(d.builds) ? d.builds.length : 0))
+      .catch(() => {});
+  }, [activePage]);
 
   // Poll instance status
   useEffect(() => {
@@ -321,55 +360,105 @@ const App: React.FC = () => {
       {/* Navbar - Hidden in Editor mode */}
       {activePage !== 'editor' && (
         <nav className="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-white/5 mx-4 mt-4 rounded-2xl">
-          <div className="container mx-auto px-6 py-4">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-              <div className="flex items-center space-x-4">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                  <i className="fas fa-robot text-white text-xl"></i>
+          <div className="container mx-auto px-6 py-3">
+            <div className="flex items-center justify-between gap-4">
+
+              {/* Logo + title */}
+              <div className="flex items-center space-x-3 shrink-0">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 animate-pulse-glow">
+                  <i className="fas fa-robot text-white"></i>
                 </div>
                 <div>
-                  <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+                  <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 leading-tight">
                     Autonomous Builder
                   </h1>
-                  <p className="text-xs text-gray-400 font-medium tracking-wide">COORDINATOR DASHBOARD</p>
+                  <p className="text-[10px] text-gray-500 font-semibold tracking-widest uppercase">COORDINATOR</p>
                 </div>
               </div>
 
-              <div className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5 backdrop-blur-sm">
+              {/* Tab switcher */}
+              <div className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5 backdrop-blur-sm gap-0.5">
+                {/* Live Preview tab */}
                 <button
-                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'live-preview'
-                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
-                    }`}
+                  className={`relative px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
+                    activePage === 'live-preview'
+                      ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                   onClick={() => setActivePage('live-preview')}
                 >
-                  <i className="fas fa-play-circle mr-2"></i>Live Preview
+                  <i className="fas fa-play-circle"></i>
+                  Live Preview
+                  {instance.status === 'running' && (
+                    <span className="tab-badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse-green ml-0.5">
+                      ●
+                    </span>
+                  )}
                 </button>
+
+                {/* Resolver tab */}
                 <button
-                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'problem-resolver'
-                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
-                    }`}
+                  className={`relative px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
+                    activePage === 'problem-resolver'
+                      ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                   onClick={() => setActivePage('problem-resolver')}
                 >
-                  <i className="fas fa-wrench mr-2"></i>Resolver
+                  <i className="fas fa-wrench"></i>
+                  Resolver
+                  {resolverRunning && (
+                    <span className="tab-badge bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse-amber">
+                      ●
+                    </span>
+                  )}
                 </button>
+
+                {/* Explorer tab */}
                 <button
-                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${activePage === 'project-explorer'
-                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
-                    }`}
+                  className={`relative px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
+                    activePage === 'project-explorer'
+                      ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
                   onClick={() => setActivePage('project-explorer')}
                 >
-                  <i className="fas fa-folder-open mr-2"></i>Explorer
+                  <i className="fas fa-folder-open"></i>
+                  Explorer
+                  {projectCount > 0 && (
+                    <span className="tab-badge bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      {projectCount}
+                    </span>
+                  )}
                 </button>
+
+                {/* Editor tab */}
                 <button
-                  className="px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 text-gray-400 hover:text-white hover:bg-white/5"
+                  className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 text-gray-400 hover:text-white hover:bg-white/5 flex items-center gap-2"
                   onClick={() => setActivePage('editor')}
                 >
-                  <i className="fas fa-code mr-2"></i>Editor
+                  <i className="fas fa-code"></i>
+                  Editor
                 </button>
               </div>
+
+              {/* Backend health pill */}
+              <div className={`health-pill shrink-0 ${
+                apiOnline === null
+                  ? 'border-white/10 text-gray-500'
+                  : apiOnline
+                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5'
+                  : 'border-red-500/30 text-red-400 bg-red-500/5'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  apiOnline === null ? 'bg-gray-500' : apiOnline ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'
+                }`}></span>
+                {apiOnline === null ? 'Connecting…' : apiOnline ? `API Online` : 'API Offline'}
+                {apiOnline && apiLatency !== null && (
+                  <span className="opacity-60 ml-0.5">· {apiLatency}ms</span>
+                )}
+              </div>
+
             </div>
           </div>
         </nav>
@@ -454,7 +543,7 @@ const App: React.FC = () => {
                         className="w-full pl-10 pr-4 py-2.5 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all font-mono text-sm"
                         placeholder="./generated/my-app"
                       />
-                      <i className="fas fa-search absolute left-3.5 top-3 text-gray-500"></i>
+                      <i className="fas fa-folder-open absolute left-3.5 top-3 text-gray-500"></i>
                     </div>
                   </div>
                 </div>
@@ -468,6 +557,14 @@ const App: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Live Build Stepper */}
+              {instance.status !== 'idle' && (
+                <BuildWorkflowStepper
+                  status={instance.status}
+                  currentStep={instance.currentStep}
+                />
+              )}
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 {/* Left Sidebar */}
@@ -491,50 +588,87 @@ const App: React.FC = () => {
                 {/* Main Preview Area */}
                 <div className="lg:col-span-8 space-y-6">
                   <div className="glass-panel rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/20">
-                    {/* Preview Header */}
-                    <div className="px-6 py-4 border-b border-white/5 bg-white/5 flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-2.5 h-2.5 rounded-full ${previewActive ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-red-500 opacity-50'}`}></div>
-                        <span className="text-sm font-medium text-gray-200">Live Preview</span>
-                        {previewStatusLabel && (
-                          <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{previewStatusLabel}</span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={handleRun}
-                          disabled={resolverRunning || autoRetryActive}
-                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20 disabled:hidden"
-                        >
-                          <i className="fas fa-play mr-1.5"></i>Run
-                        </button>
-                        <button
-                          onClick={startResolverAndRerun}
-                          disabled={resolverRunning}
-                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20 disabled:hidden"
-                        >
-                          <i className="fas fa-bug mr-1.5"></i>Diagnose
-                        </button>
-                        <button
-                          onClick={handleDeploy}
-                          disabled={!previewActive}
-                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 border-indigo-500/20 disabled:hidden"
-                        >
-                          <i className="fas fa-rocket mr-1.5"></i>Deploy
-                        </button>
-                        <button
-                          onClick={handleStop}
-                          disabled={!instance.instanceId}
-                          className="glass-button text-xs px-3 py-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/20 disabled:hidden"
-                        >
-                          <i className="fas fa-square mr-1.5"></i>Stop
-                        </button>
-                      </div>
+                  {/* Preview Header */}
+                  <div className="px-5 py-3 border-b border-white/5 bg-white/5 flex items-center justify-between gap-3">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-2.5 h-2.5 rounded-full ${previewActive ? 'bg-emerald-500 animate-pulse-green' : 'bg-gray-600'}`}></div>
+                      <span className="text-sm font-medium text-gray-200">Live Preview</span>
+                      {previewStatusLabel && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+                          previewActive
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : 'bg-white/5 border-white/10 text-gray-500'
+                        }`}>{previewStatusLabel}</span>
+                      )}
                     </div>
 
-                    {/* Preview Body */}
-                    <div className="bg-[#0c0c0e] min-h-[500px] relative">
+                    {/* Device viewport toggles */}
+                    {previewActive && (
+                      <div className="flex items-center gap-1">
+                        {(['desktop', 'tablet', 'mobile'] as const).map((d) => (
+                          <button
+                            key={d}
+                            onClick={() => setDeviceViewport(d)}
+                            className={`device-toggle ${deviceViewport === d ? 'active' : ''}`}
+                            title={d.charAt(0).toUpperCase() + d.slice(1)}
+                          >
+                            <i className={`fas fa-${
+                              d === 'desktop' ? 'desktop' : d === 'tablet' ? 'tablet-alt' : 'mobile-alt'
+                            } text-xs`}></i>
+                            <span className="hidden sm:inline capitalize">{d}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center space-x-1.5">
+                      {previewActive && instance.rawPreviewUrl && (
+                        <a
+                          href={instance.rawPreviewUrl || instance.previewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="glass-button text-xs px-2.5 py-1.5 rounded-lg text-gray-400 hover:text-white"
+                          title="Open in new tab"
+                        >
+                          <i className="fas fa-external-link-alt"></i>
+                        </a>
+                      )}
+                      <button
+                        onClick={handleRun}
+                        disabled={resolverRunning || autoRetryActive}
+                        className="glass-button text-xs px-3 py-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border-emerald-500/20 disabled:hidden"
+                      >
+                        <i className="fas fa-play mr-1.5"></i>Run
+                      </button>
+                      <button
+                        onClick={startResolverAndRerun}
+                        disabled={resolverRunning}
+                        className="glass-button text-xs px-3 py-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border-amber-500/20 disabled:hidden"
+                      >
+                        <i className="fas fa-bug mr-1.5"></i>Diagnose
+                      </button>
+                      <button
+                        onClick={handleDeploy}
+                        disabled={!previewActive}
+                        className="glass-button text-xs px-3 py-1.5 rounded-lg text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 border-indigo-500/20 disabled:hidden"
+                      >
+                        <i className="fas fa-rocket mr-1.5"></i>Deploy
+                      </button>
+                      <button
+                        onClick={handleStop}
+                        disabled={!instance.instanceId}
+                        className="glass-button text-xs px-3 py-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/20 disabled:hidden"
+                      >
+                        <i className="fas fa-square mr-1.5"></i>Stop
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Preview Body */}
+                  <div
+                    className="bg-[#0c0c0e] min-h-[500px] relative transition-all duration-500"
+                    style={previewActive ? { maxWidth: DEVICE_WIDTHS[deviceViewport], margin: deviceViewport !== 'desktop' ? '0 auto' : undefined } : undefined}
+                  >
                       {previewActive ? (
                         <LivePreview
                           previewUrl={instance.previewUrl as string}
