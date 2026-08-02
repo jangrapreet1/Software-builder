@@ -213,7 +213,16 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
           if (!res.ok) { localStorage.removeItem('sb_active_build_id'); return; }
           const data = await res.json();
           const st = (data.status || '').toLowerCase();
-          if (st === 'success' || st === 'failed' || st === 'error') {
+          const prog = data.progress ?? 0;
+          if (st === 'success' || prog >= 100) {
+            localStorage.removeItem('sb_active_build_id');
+            if (data.source_path) {
+              setSourcePath(data.source_path);
+              launchSandbox(data.source_path);
+            }
+            return;
+          }
+          if (st === 'failed' || st === 'error') {
             localStorage.removeItem('sb_active_build_id');
             return;
           }

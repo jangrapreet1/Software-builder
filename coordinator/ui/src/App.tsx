@@ -45,11 +45,16 @@ const App: React.FC = () => {
 
   // Fetch project count for Explorer badge
   useEffect(() => {
-    fetch('/api/builds')
-      .then(r => r.json())
-      .then(d => setProjectCount(Array.isArray(d.builds) ? d.builds.length : 0))
-      .catch(() => {});
-  }, [activePage]);
+    const loadCount = () => {
+      fetch('/api/builds')
+        .then(r => r.json())
+        .then(d => setProjectCount(Array.isArray(d.builds) ? d.builds.length : 0))
+        .catch(() => {});
+    };
+    loadCount();
+    const intervalId = setInterval(loadCount, 30000);
+    return () => clearInterval(intervalId);
+  }, []);
 
   return (
     <div className="min-h-screen text-foreground font-sans selection:bg-primary/30">
@@ -157,55 +162,61 @@ const App: React.FC = () => {
           onDismiss={dismissNotification}
         />
 
-        {activePage === 'builder' ? (
+        {/* Builder Tab */}
+        <div className={activePage === 'builder' ? 'block' : 'hidden'}>
           <ErrorBoundary>
-          <BuilderPage addNotification={(n) => addNotification({ ...n, type: n.type as NotifType })} />
+            <BuilderPage addNotification={(n) => addNotification({ ...n, type: n.type as NotifType })} />
           </ErrorBoundary>
-        ) : activePage === 'project-explorer' ? (
+        </div>
+
+        {/* Project Explorer Tab */}
+        <div className={activePage === 'project-explorer' ? 'block animate-fade-in' : 'hidden'}>
           <ErrorBoundary>
-            <div className="animate-fade-in">
-              <ProjectExplorer
-                frameworksError={null}
-                onOpenEditor={(projectPath: string) => {
-                  setAppPath(projectPath);
-                  setActivePage('editor');
-                }}
-                onGoToBuilder={() => setActivePage('builder')}
-              />
-            </div>
+            <ProjectExplorer
+              frameworksError={null}
+              onOpenEditor={(projectPath: string) => {
+                setAppPath(projectPath);
+                setActivePage('editor');
+              }}
+              onGoToBuilder={() => setActivePage('builder')}
+            />
           </ErrorBoundary>
-        ) : activePage === 'problem-resolver' ? (
+        </div>
+
+        {/* Problem Resolver Tab */}
+        <div className={activePage === 'problem-resolver' ? 'block animate-fade-in max-w-5xl mx-auto' : 'hidden'}>
           <ErrorBoundary>
-            <div className="animate-fade-in max-w-5xl mx-auto">
-              <div className="glass-panel rounded-2xl p-8 mb-8">
-                <label className="block text-sm font-medium text-gray-300 mb-3">
-                  Application Path
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={appPath}
-                    onChange={(e) => setAppPath(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all"
-                    placeholder="./generated/my-app"
-                  />
-                  <i className="fas fa-folder absolute left-3.5 top-3.5 text-gray-500"></i>
-                </div>
+            <div className="glass-panel rounded-2xl p-8 mb-8">
+              <label className="block text-sm font-medium text-gray-300 mb-3">
+                Application Path
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={appPath}
+                  onChange={(e) => setAppPath(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-black/20 border border-white/10 rounded-xl focus:ring-2 focus:ring-primary/50 text-white placeholder-gray-500 outline-none transition-all"
+                  placeholder="./generated/my-app"
+                />
+                <i className="fas fa-folder absolute left-3.5 top-3.5 text-gray-500"></i>
               </div>
-              <EnhancedProblemResolverPanel
-                appPath={appPath}
-                onNotification={(type, title, message) => {
-                  addNotification({
-                    type,
-                    title,
-                    message,
-                    duration: 5000
-                  });
-                }}
-              />
             </div>
+            <EnhancedProblemResolverPanel
+              appPath={appPath}
+              onNotification={(type, title, message) => {
+                addNotification({
+                  type,
+                  title,
+                  message,
+                  duration: 5000
+                });
+              }}
+            />
           </ErrorBoundary>
-        ) : activePage === 'editor' ? (
+        </div>
+
+        {/* Editor Tab */}
+        <div className={activePage === 'editor' ? 'block' : 'hidden'}>
           <ErrorBoundary>
             <IDEShell
               root={appPath}
@@ -215,7 +226,7 @@ const App: React.FC = () => {
               isRunning={false}
             />
           </ErrorBoundary>
-        ) : null}
+        </div>
       </main>
     </div>
   );
