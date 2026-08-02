@@ -55,7 +55,7 @@ export const BuilderChat: React.FC<BuilderChatProps> = ({
     <div className={`flex flex-col h-full w-full ${compact ? 'max-w-[350px] text-sm' : 'text-base'}`}>
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-        {messages.map((msg) => {
+        {(messages || []).map((msg) => {
           if (msg.role === 'user') {
             return (
               <div key={msg.id} className="flex justify-end animate-fade-in">

@@ -63,12 +63,18 @@ export const PromptHero: React.FC<PromptHeroProps> = ({ onSubmit, isBuilding }) 
         
         if (backendRes.ok) {
           const backendData = await backendRes.json();
-          setBackendFrameworks(backendData);
+          const list = Array.isArray(backendData?.frameworks)
+            ? backendData.frameworks
+            : (Array.isArray(backendData) ? backendData : []);
+          setBackendFrameworks(list);
         }
         
         if (frontendRes.ok) {
           const frontendData = await frontendRes.json();
-          setFrontendFrameworks(frontendData);
+          const list = Array.isArray(frontendData?.frameworks)
+            ? frontendData.frameworks
+            : (Array.isArray(frontendData) ? frontendData : []);
+          setFrontendFrameworks(list);
         }
       } catch (error) {
         console.error('Failed to fetch frameworks', error);
@@ -166,7 +172,7 @@ export const PromptHero: React.FC<PromptHeroProps> = ({ onSubmit, isBuilding }) 
                 disabled={isBuilding}
               >
                 <option value="">Auto-detect</option>
-                {frontendFrameworks.map(fw => (
+                {Array.isArray(frontendFrameworks) && frontendFrameworks.map(fw => (
                   <option key={fw.id} value={fw.id}>{fw.name}</option>
                 ))}
               </select>
@@ -181,7 +187,7 @@ export const PromptHero: React.FC<PromptHeroProps> = ({ onSubmit, isBuilding }) 
                 disabled={isBuilding}
               >
                 <option value="">Auto-detect</option>
-                {backendFrameworks.map(fw => (
+                {Array.isArray(backendFrameworks) && backendFrameworks.map(fw => (
                   <option key={fw.id} value={fw.id}>{fw.name}</option>
                 ))}
               </select>
