@@ -4,6 +4,7 @@ import { BuilderChat, ChatEntry } from './BuilderChat';
 import BuildWorkflowStepper from './BuildWorkflowStepper';
 import { LivePreview } from './LivePreview';
 import { IDEShell } from './IDEShell';
+import { AgentActivityPanel } from './AgentActivityPanel';
 
 type Phase = 'idle' | 'building' | 'running';
 type DeviceViewport = 'desktop' | 'tablet' | 'mobile';
@@ -29,6 +30,9 @@ function addMsg(role: ChatEntry['role'], content: string, extra?: Partial<ChatEn
 export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => {
   // ─── State ───
   const [phase, setPhase] = useState<Phase>('idle');
+  const [activeBuildId, setActiveBuildId] = useState<string>('');
+  const [buildingViewTab, setBuildingViewTab] = useState<'chat' | 'activity'>('chat');
+  const [sidebarTab, setSidebarTab] = useState<'chat' | 'activity'>('chat');
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [buildProgress, setBuildProgress] = useState(0);
   const [buildStep, setBuildStep] = useState('');
@@ -45,6 +49,7 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const activityWsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
   const MAX_RETRIES = 2;
 
@@ -138,9 +143,32 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
     }
   }, [pushMsg, addNotification]);
 
+  // ─── Agent Activity WebSocket ───
+  const connectActivityWs = useCallback((id: string) => {
+    if (activityWsRef.current) { try { activityWsRef.current.close(); } catch {} }
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws/agent-activity/${id}`);
+
+    ws.onmessage = (event) => {
+      try {
+        const evt = JSON.parse(event.data);
+        if (evt && evt.message) {
+          const agentName = evt.agent || 'Agent';
+          const icon = evt.level === 'error' ? '❌' : evt.level === 'warning' ? '⚠️' : evt.level === 'success' ? '✓' : '🤖';
+          pushMsg('agent', `${icon} [${agentName}] ${evt.message}`);
+        }
+      } catch {}
+    };
+
+    ws.onclose = () => { activityWsRef.current = null; };
+    activityWsRef.current = ws;
+  }, [pushMsg]);
+
   // ─── Build WebSocket ───
   const connectBuildWs = useCallback((id: string) => {
     if (wsRef.current) { try { wsRef.current.close(); } catch {} }
+    setActiveBuildId(id);
+    connectActivityWs(id);
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/build/${id}`);
@@ -155,15 +183,6 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
         setBuildProgress(progress);
         setBuildStep(step);
         setBuildStatus(status === 'building' ? 'building' : status);
-
-        // Post agent messages for key milestones
-        if (step && progress > 0) {
-          const stepLower = step.toLowerCase();
-          if (stepLower.includes('analyz')) pushMsg('agent', `🔍 ${step}`);
-          else if (stepLower.includes('generat') && progress >= 40 && progress < 50) pushMsg('agent', `⚡ ${step}`);
-          else if (stepLower.includes('valid')) pushMsg('agent', `✓ ${step}`);
-          else if (stepLower.includes('build') && progress >= 80) pushMsg('agent', `🏗️ ${step}`);
-        }
 
         // Build complete
         if (status === 'success' || progress >= 100) {
@@ -201,7 +220,7 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
     };
 
     wsRef.current = ws;
-  }, [pushMsg, launchSandbox, addNotification]);
+  }, [pushMsg, launchSandbox, addNotification, connectActivityWs]);
 
   // ─── Rehydrate from localStorage ───
   useEffect(() => {
@@ -333,21 +352,50 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
   // ─── Phase 2: Building ───
   if (phase === 'building') {
     return (
-      <div className="animate-fade-in max-w-4xl mx-auto pt-4 px-4 flex flex-col gap-6" style={{ height: 'calc(100vh - 120px)' }}>
+      <div className="animate-fade-in max-w-4xl mx-auto pt-4 px-4 flex flex-col gap-4" style={{ height: 'calc(100vh - 120px)' }}>
         {/* Stepper */}
         <BuildWorkflowStepper status={buildStatus} currentStep={buildStep} />
 
-        {/* Chat thread */}
+        {/* View mode toggle tabs */}
+        <div className="flex items-center justify-between px-2 shrink-0">
+          <div className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5 gap-1">
+            <button
+              onClick={() => setBuildingViewTab('chat')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                buildingViewTab === 'chat' ? 'bg-primary text-white shadow-lg shadow-primary/25' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <i className="fas fa-comments"></i>
+              <span>Agent Chat Feed</span>
+            </button>
+            <button
+              onClick={() => setBuildingViewTab('activity')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                buildingViewTab === 'activity' ? 'bg-primary text-white shadow-lg shadow-primary/25' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <i className="fas fa-network-wired"></i>
+              <span>Live Agent Stream (Detailed)</span>
+            </button>
+          </div>
+          <span className="text-xs text-gray-400 font-mono">Build ID: {activeBuildId.substring(0, 8)}…</span>
+        </div>
+
+        {/* Main Content Area */}
         <div className="flex-1 min-h-0">
-          <BuilderChat
-            messages={messages}
-            isBuilding={true}
-            buildProgress={buildProgress}
-            currentStep={buildStep}
-            buildStatus={buildStatus}
-            onSendMessage={handleChatMessage}
-            inputEnabled={false}
-          />
+          {buildingViewTab === 'chat' ? (
+            <BuilderChat
+              messages={messages}
+              isBuilding={true}
+              buildProgress={buildProgress}
+              currentStep={buildStep}
+              buildStatus={buildStatus}
+              onSendMessage={handleChatMessage}
+              inputEnabled={false}
+            />
+          ) : (
+            <AgentActivityPanel buildId={activeBuildId} />
+          )}
         </div>
       </div>
     );
@@ -356,13 +404,32 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
   // ─── Phase 3: Running (split view) ───
   return (
     <div className="animate-fade-in builder-split" style={{ height: 'calc(100vh - 80px)' }}>
-      {/* Left Sidebar — Chat */}
+      {/* Left Sidebar — Chat or Agent Activity */}
       <div className={`builder-sidebar ${sidebarExpanded ? 'expanded' : 'collapsed'} flex flex-col`}>
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 shrink-0">
-          {sidebarExpanded && <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chat</span>}
+          {sidebarExpanded && (
+            <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded-lg border border-white/5">
+              <button
+                onClick={() => setSidebarTab('chat')}
+                className={`text-[11px] font-semibold px-2 py-0.5 rounded-md transition-all ${
+                  sidebarTab === 'chat' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Chat
+              </button>
+              <button
+                onClick={() => setSidebarTab('activity')}
+                className={`text-[11px] font-semibold px-2 py-0.5 rounded-md transition-all ${
+                  sidebarTab === 'activity' ? 'bg-primary text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Agent Stream
+              </button>
+            </div>
+          )}
           <button
             onClick={() => setSidebarExpanded(!sidebarExpanded)}
-            className="glass-button w-7 h-7 rounded-lg text-xs p-0"
+            className="glass-button w-7 h-7 rounded-lg text-xs p-0 ml-auto"
             title={sidebarExpanded ? 'Collapse' : 'Expand'}
           >
             <i className={`fas fa-${sidebarExpanded ? 'chevron-left' : 'comments'} text-[10px]`}></i>
@@ -370,16 +437,20 @@ export const BuilderPage: React.FC<BuilderPageProps> = ({ addNotification }) => 
         </div>
         {sidebarExpanded && (
           <div className="flex-1 min-h-0">
-            <BuilderChat
-              messages={messages}
-              isBuilding={false}
-              buildProgress={100}
-              currentStep="Running"
-              buildStatus="running"
-              onSendMessage={handleChatMessage}
-              inputEnabled={true}
-              compact
-            />
+            {sidebarTab === 'chat' ? (
+              <BuilderChat
+                messages={messages}
+                isBuilding={false}
+                buildProgress={100}
+                currentStep="Running"
+                buildStatus="running"
+                onSendMessage={handleChatMessage}
+                inputEnabled={true}
+                compact
+              />
+            ) : (
+              <AgentActivityPanel buildId={activeBuildId} compact />
+            )}
           </div>
         )}
       </div>

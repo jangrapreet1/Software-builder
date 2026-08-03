@@ -541,6 +541,8 @@ class EnhancedAppBuilderWorkflow:
     async def _analyze_brief_enhanced(self, state: dict, feedback: dict) -> dict:
         """Analyze brief with error feedback"""
         self._update_progress(state, 10)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "CoordinatorAgent", "analyze_brief", "Analyzing project brief requirements and domain entities...", "info")
         
         # Add feedback constraints if available
         brief = state["brief"]
@@ -550,6 +552,14 @@ class EnhancedAppBuilderWorkflow:
                 brief += f"- {mod['description']}\n"
         
         result = await self.coordinator.analyze_brief(brief)
+        self._emit_activity(
+            build_id, 
+            "CoordinatorAgent", 
+            "analyze_brief", 
+            f"Extracted {len(result.get('features', []))} features, {len(result.get('entities', []))} entities & {len(result.get('user_flows', []))} user flows", 
+            "success",
+            {"features": len(result.get("features", [])), "entities": len(result.get("entities", []))}
+        )
         
         return {
             "features": result["features"],
@@ -561,6 +571,8 @@ class EnhancedAppBuilderWorkflow:
     async def _generate_specs(self, state: dict) -> dict:
         """Generate technical specifications"""
         self._update_progress(state, 25)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "CoordinatorAgent", "generate_specs", "Generating technical architecture specifications...", "info")
         
         specs = await self.coordinator.generate_technical_specs(
             state["features"],
@@ -595,6 +607,8 @@ class EnhancedAppBuilderWorkflow:
         preventive_additions = self.error_feedback.generate_preventive_spec_additions()
         if preventive_additions:
             specs["preventive_measures"] = preventive_additions
+            
+        self._emit_activity(build_id, "CoordinatorAgent", "generate_specs", "Technical specifications generated with architecture patterns", "success")
         
         return {
             "technical_specs": specs,
@@ -604,8 +618,13 @@ class EnhancedAppBuilderWorkflow:
     async def _plan_tasks(self, state: dict) -> dict:
         """Plan development tasks"""
         self._update_progress(state, 35)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "CoordinatorAgent", "plan_tasks", "Planning granular backend and frontend implementation tasks...", "info")
         
         tasks = await self.coordinator.plan_tasks(state["technical_specs"])
+        be_cnt = len(tasks.get("backend", []))
+        fe_cnt = len(tasks.get("frontend", []))
+        self._emit_activity(build_id, "CoordinatorAgent", "plan_tasks", f"Planned {be_cnt} backend tasks and {fe_cnt} frontend tasks", "success", {"backend_tasks": be_cnt, "frontend_tasks": fe_cnt})
         
         return {
             "backend_tasks": tasks["backend"],
@@ -616,12 +635,15 @@ class EnhancedAppBuilderWorkflow:
     async def _generate_backend(self, state: dict) -> dict:
         """Generate backend code"""
         self._update_progress(state, 45)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "BackendAgent", "generate_backend", "Generating backend models, controllers & API schemas...", "info")
         
         backend_code = await self.backend_agent.generate_code(
             state["backend_tasks"],
             state["entities"],
             state["technical_specs"]
         )
+        self._emit_activity(build_id, "BackendAgent", "generate_backend", "Backend API services & database code generated", "success")
         
         return {
             "backend_code": backend_code,
@@ -631,6 +653,8 @@ class EnhancedAppBuilderWorkflow:
     async def _generate_frontend(self, state: dict) -> dict:
         """Generate frontend code"""
         self._update_progress(state, 60)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "FrontendAgent", "generate_frontend", "Generating React UI components, pages & state stores...", "info")
         
         frontend_code = await self.frontend_agent.generate_code(
             state["frontend_tasks"],
@@ -638,6 +662,7 @@ class EnhancedAppBuilderWorkflow:
             state["technical_specs"],
             state["backend_code"]
         )
+        self._emit_activity(build_id, "FrontendAgent", "generate_frontend", "React UI components & page routes generated", "success")
         
         return {
             "frontend_code": frontend_code,
@@ -647,6 +672,8 @@ class EnhancedAppBuilderWorkflow:
     async def _integrate_code(self, state: dict) -> dict:
         """Integrate frontend and backend"""
         self._update_progress(state, 75)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "IntegrationAgent", "integrate_code", "Structuring project files and Docker configuration...", "info")
         
         integration = await self.integration_agent.integrate(
             state["project_name"],
@@ -654,6 +681,7 @@ class EnhancedAppBuilderWorkflow:
             state["frontend_code"],
             state["technical_specs"]
         )
+        self._emit_activity(build_id, "IntegrationAgent", "integrate_code", f"Project files structured in {integration.get('path', '')}", "success")
         
         return {
             "integrated_code": integration["code"],
@@ -665,6 +693,8 @@ class EnhancedAppBuilderWorkflow:
     async def _validate_build_comprehensive(self, state: dict) -> dict:
         """Comprehensive build validation"""
         self._update_progress(state, 85)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "BuildValidator", "validate_build", "Running comprehensive build & structural quality validation...", "info")
         
         validator = BuildValidator()
         validation_results = await validator.validate_build(state["source_path"])
@@ -674,6 +704,7 @@ class EnhancedAppBuilderWorkflow:
         status = validation_results.get("overall_status", "unknown")
         
         self._log(state, "info", f"Validation score: {score}/100 - Status: {status}")
+        self._emit_activity(build_id, "BuildValidator", "validate_build", f"Quality Score: {score}/100 · Status: {status.upper()}", "success" if status == "passed" else "warning", {"score": score, "status": status})
         
         # Record metrics
         self.metrics.set_gauge("builds.last_validation_score", score)
@@ -688,11 +719,14 @@ class EnhancedAppBuilderWorkflow:
 
     async def _preflight_check(self, state: dict) -> dict:
         self._update_progress(state, 82)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "PreflightValidator", "preflight", "Checking dependencies & preflight environment configuration...", "info")
         validator = PreflightValidator()
         results = await validator.validate(state["source_path"])
         state.setdefault("preflight_results", {})
         state["preflight_results"]["initial"] = results
         if results.get("overall") == "failed":
+            self._emit_activity(build_id, "DependencyAgent", "preflight", "Preflight check flagged missing dependencies. Auto-repairing...", "warning")
             ctx = ExecutionContext(
                 build_id=state["build_id"],
                 request_data={"project_path": state["source_path"]},
@@ -703,8 +737,10 @@ class EnhancedAppBuilderWorkflow:
             results2 = await validator.validate(state["source_path"])
             state["preflight_results"]["after_fixes"] = results2
             self.metrics.increment_counter("preflight.issues", len(results.get("issues", [])))
+            self._emit_activity(build_id, "DependencyAgent", "preflight", "Dependency auto-repair complete", "success")
         else:
             self.metrics.increment_counter("preflight.passed")
+            self._emit_activity(build_id, "PreflightValidator", "preflight", "Preflight checks passed", "success")
         return {"progress": 84}
 
     async def _monitor_feedback(self, state: dict) -> dict:
@@ -731,6 +767,8 @@ class EnhancedAppBuilderWorkflow:
     async def _resolve_problems(self, state: dict) -> dict:
         """Auto-resolve problems with error feedback"""
         self._update_progress(state, 92)
+        build_id = state["build_id"]
+        self._emit_activity(build_id, "ProblemResolverAgent", "resolve_problems", "Diagnosing logs & attempting automated code repairs...", "info")
         
         # Collect error logs
         error_logs = "\n".join([
@@ -744,6 +782,8 @@ class EnhancedAppBuilderWorkflow:
             error_logs=error_logs,
             context={"build_id": state["build_id"]}
         )
+        repairs_cnt = len(resolution.get("resolution_log", []))
+        self._emit_activity(build_id, "ProblemResolverAgent", "resolve_problems", f"Problem Resolver completed with {repairs_cnt} repairs applied", "success" if repairs_cnt > 0 else "info")
         
         # Record in error feedback system
         for issue in resolution.get("resolution_log", []):
