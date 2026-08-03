@@ -88,6 +88,62 @@ export const IDEShell: React.FC<IDEShellProps> = ({ root, onRun, onStop, onBack,
     const [showChatPanel, setShowChatPanel] = useState(true);
     const [_chatSessionId, setChatSessionId] = useState<string>('');
 
+    // Agent status & live streaming state
+    const [agentStatus, setAgentStatus] = useState<{
+        isThinking: boolean;
+        isWriting: boolean;
+        targetFile?: string;
+        toolName?: string;
+    }>({ isThinking: false, isWriting: false });
+
+    const [streamedEdit, setStreamedEdit] = useState<{
+        path: string;
+        originalContent: string;
+        newContent: string;
+        isDone: boolean;
+    } | null>(null);
+
+    const handleLiveCodeStream = useCallback((filePath: string, code: string, isDone: boolean) => {
+        if (!filePath) return;
+
+        setOpenTabs(prev => {
+            const normTarget = filePath.replace(/\\/g, '/');
+            const existingIndex = prev.findIndex(t => {
+                const p = t.path.replace(/\\/g, '/');
+                return p.endsWith(normTarget) || normTarget.endsWith(p);
+            });
+
+            if (existingIndex >= 0) {
+                const copy = [...prev];
+                const targetTab = copy[existingIndex];
+                setStreamedEdit(curr => {
+                    if (!curr || curr.path !== targetTab.path) {
+                        return { path: targetTab.path, originalContent: targetTab.content, newContent: code, isDone };
+                    }
+                    return { ...curr, newContent: code, isDone };
+                });
+
+                copy[existingIndex] = {
+                    ...targetTab,
+                    content: code,
+                    dirty: true,
+                };
+                setActiveTabPath(targetTab.path);
+                return copy;
+            } else {
+                const newTab: OpenTab = {
+                    path: filePath,
+                    content: code,
+                    dirty: true,
+                    language: guessLanguage(filePath),
+                };
+                setActiveTabPath(filePath);
+                setStreamedEdit({ path: filePath, originalContent: '', newContent: code, isDone });
+                return [...prev, newTab];
+            }
+        });
+    }, []);
+
     // Bottom panel state
     const [bottomPanelHeight, setBottomPanelHeight] = useState(180);
     const [isResizingBottom, setIsResizingBottom] = useState(false);
@@ -437,20 +493,71 @@ export const IDEShell: React.FC<IDEShellProps> = ({ root, onRun, onStop, onBack,
                     </div>
 
                     {/* Editor Surface */}
-                    <div className="flex-1 min-h-0 bg-[#1e1e1e]" style={{ height: `calc(100% - 35px - ${bottomPanelHeight}px)` }}>
-                        {activeTab ? (
-                            <CodeEditor
-                                language={activeTab.language}
-                                value={activeTab.content}
-                                onChange={handleContentChange}
-                            />
-                        ) : (
-                            <div className="h-full flex flex-col items-center justify-center text-[#5a5a5a]">
-                                <i className="fas fa-file-code text-[48px] mb-4 opacity-30"></i>
-                                <p className="text-[14px]">Select a file to open</p>
-                                <p className="text-[12px] mt-1 text-[#4a4a4a]">Ctrl+S to save</p>
+                    <div className="flex-1 min-h-0 bg-[#1e1e1e] flex flex-col relative" style={{ height: `calc(100% - 35px - ${bottomPanelHeight}px)` }}>
+                        {/* Live Agent Status Banner */}
+                        {(agentStatus.isWriting || agentStatus.isThinking) && (
+                            <div className="bg-[#007acc]/20 border-b border-[#007acc]/40 px-4 py-1.5 flex items-center justify-between text-xs text-[#007acc] animate-pulse shrink-0 z-10">
+                                <div className="flex items-center gap-2 font-medium">
+                                    <i className={`fas ${agentStatus.isWriting ? 'fa-pen-nib' : 'fa-brain'} fa-spin`}></i>
+                                    <span>
+                                        {agentStatus.isWriting
+                                            ? `AI Agent writing to ${agentStatus.targetFile || getFileName(activeTabPath)}...`
+                                            : `AI Agent thinking... (${agentStatus.toolName || 'analyzing codebase'})`}
+                                    </span>
+                                </div>
+                                <span className="text-[10px] bg-[#007acc]/30 text-white font-mono px-2 py-0.5 rounded tracking-wider uppercase font-semibold">
+                                    LIVE AI STREAM
+                                </span>
                             </div>
                         )}
+
+                        {/* Cursor/Antigravity Floating Accept/Revert Action Bar */}
+                        {streamedEdit && streamedEdit.isDone && streamedEdit.path === activeTabPath && (
+                            <div className="bg-[#252526] border-b border-[#3c3c3c] px-4 py-2 flex items-center justify-between text-xs shrink-0 z-10 shadow-lg animate-fade-in">
+                                <div className="flex items-center gap-2 text-emerald-400 font-medium">
+                                    <i className="fas fa-sparkles text-amber-400"></i>
+                                    <span>AI generated code edits for <strong>{getFileName(streamedEdit.path)}</strong></span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => {
+                                            handleSave();
+                                            setStreamedEdit(null);
+                                        }}
+                                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded flex items-center gap-1.5 transition-all shadow-md"
+                                    >
+                                        <i className="fas fa-check"></i> Accept Changes (Ctrl+S)
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (streamedEdit) {
+                                                setOpenTabs(prev => prev.map(t => t.path === streamedEdit.path ? { ...t, content: streamedEdit.originalContent, dirty: false } : t));
+                                            }
+                                            setStreamedEdit(null);
+                                        }}
+                                        className="px-3 py-1 bg-[#3c3c3c] hover:bg-[#4c4c4c] text-gray-300 rounded flex items-center gap-1.5 transition-all"
+                                    >
+                                        <i className="fas fa-undo"></i> Revert
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex-1 min-h-0 relative">
+                            {activeTab ? (
+                                <CodeEditor
+                                    language={activeTab.language}
+                                    value={activeTab.content}
+                                    onChange={handleContentChange}
+                                />
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-[#5a5a5a]">
+                                    <i className="fas fa-file-code text-[48px] mb-4 opacity-30"></i>
+                                    <p className="text-[14px]">Select a file to open</p>
+                                    <p className="text-[12px] mt-1 text-[#4a4a4a]">Ctrl+S to save</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Bottom Panel Resize Handle */}
@@ -502,6 +609,8 @@ export const IDEShell: React.FC<IDEShellProps> = ({ root, onRun, onStop, onBack,
                                     contextRoot={root}
                                     selectedPath={activeTabPath}
                                     onSessionReady={setChatSessionId}
+                                    onLiveCodeStream={handleLiveCodeStream}
+                                    onAgentStatusChange={setAgentStatus}
                                 />
                             </div>
                         </div>

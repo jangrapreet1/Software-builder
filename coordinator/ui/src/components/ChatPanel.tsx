@@ -368,9 +368,19 @@ interface ChatPanelProps {
   hideSessionList?: boolean;
   selectedPath?: string;
   onSessionReady?: (sessionId: string) => void;
+  onLiveCodeStream?: (filePath: string, code: string, isDone: boolean) => void;
+  onAgentStatusChange?: (status: { isThinking: boolean; isWriting: boolean; targetFile?: string; toolName?: string }) => void;
 }
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextRoot, hideSessionList, selectedPath, onSessionReady }) => {
+export const ChatPanel: React.FC<ChatPanelProps> = ({ 
+  embedded = false, 
+  contextRoot, 
+  hideSessionList, 
+  selectedPath, 
+  onSessionReady,
+  onLiveCodeStream,
+  onAgentStatusChange
+}) => {
   const [sessions, setSessions] = useState<ChatSessionMeta[]>([]);
   const [sessionId, setSessionId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -464,10 +474,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
         const data: WsEvent = JSON.parse(evt.data);
         if (data.type === 'token') {
           streamingBufferRef.current += data.token;
+          
+          if (onAgentStatusChange) {
+            onAgentStatusChange({ isThinking: false, isWriting: true, targetFile: selectedPath });
+          }
+
+          if (onLiveCodeStream && selectedPath) {
+            const buf = streamingBufferRef.current;
+            const codeMatch = buf.match(/```(?:\w+)?\n([\s\S]*?)(?:```|$)/);
+            const liveCode = codeMatch ? codeMatch[1] : buf;
+            if (liveCode.trim().length > 3) {
+              onLiveCodeStream(selectedPath, liveCode, false);
+            }
+          }
+
           // Optimistic UI: show as the last assistant message streaming
           setMessages((prev) => {
             const copy = [...prev];
-            // if last is assistant placeholder, update it, else push new
             if (copy.length > 0 && copy[copy.length - 1].role === 'assistant' && copy[copy.length - 1].content.endsWith('…')) {
               copy[copy.length - 1] = {
                 ...copy[copy.length - 1],
@@ -481,9 +504,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
         } else if (data.type === 'done') {
           const finalText = data.content;
           streamingBufferRef.current = '';
+
+          if (onAgentStatusChange) {
+            onAgentStatusChange({ isThinking: false, isWriting: false });
+          }
+
+          if (onLiveCodeStream && selectedPath) {
+            const codeMatch = finalText.match(/```(?:\w+)?\n([\s\S]*?)(?:```|$)/);
+            if (codeMatch && codeMatch[1]) {
+              onLiveCodeStream(selectedPath, codeMatch[1], true);
+            }
+          }
+
           setMessages((prev) => {
             const copy = [...prev];
-            // replace last assistant streaming with final
             if (copy.length > 0 && copy[copy.length - 1].role === 'assistant' && copy[copy.length - 1].content.endsWith('…')) {
               copy[copy.length - 1] = { role: 'assistant', content: finalText };
             } else {
@@ -492,11 +526,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ embedded = false, contextR
             return copy;
           });
         } else if (data.type === 'tool') {
+          if (onAgentStatusChange) {
+            onAgentStatusChange({ isThinking: true, isWriting: false, toolName: data.tool, targetFile: data.arg });
+          }
           setMessages((prev) => [
             ...prev,
             { role: 'tool', content: `[${data.tool || 'tool'}] ${data.arg || ''}\n${data.content || ''}`.trim() },
           ]);
         } else if (data.type === 'error') {
+          if (onAgentStatusChange) {
+            onAgentStatusChange({ isThinking: false, isWriting: false });
+          }
           setMessages((prev) => [...prev, { role: 'system', content: `Error: ${data.message}` }]);
         }
       } catch {
